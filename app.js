@@ -30,7 +30,7 @@ const SAMPLE_LISTINGS = [
     reward: 5000,
     surveyLink: 'https://forms.gle/example1',
     deadline: '2026-04-15',
-    status: 'active',
+    status: 'closed',
     category: '금융',
     estimatedTime: '15분',
   },
@@ -41,7 +41,7 @@ const SAMPLE_LISTINGS = [
     reward: 3000,
     surveyLink: 'https://forms.gle/example2',
     deadline: '2026-04-10',
-    status: 'active',
+    status: 'closed',
     category: '외식·F&B',
     estimatedTime: '10분',
   },
@@ -52,7 +52,7 @@ const SAMPLE_LISTINGS = [
     reward: 8000,
     surveyLink: 'https://forms.gle/example3',
     deadline: '2026-05-01',
-    status: 'active',
+    status: 'closed',
     category: '자동차',
     estimatedTime: '20분',
   },
@@ -63,7 +63,7 @@ const SAMPLE_LISTINGS = [
     reward: 4000,
     surveyLink: 'https://forms.gle/example4',
     deadline: '2026-04-20',
-    status: 'active',
+    status: 'closed',
     category: '근무환경',
     estimatedTime: '12분',
   },
@@ -85,7 +85,7 @@ const SAMPLE_LISTINGS = [
     reward: 4500,
     surveyLink: 'https://forms.gle/example6',
     deadline: '2026-04-30',
-    status: 'active',
+    status: 'closed',
     category: '미디어·콘텐츠',
     estimatedTime: '15분',
   },
@@ -93,12 +93,23 @@ const SAMPLE_LISTINGS = [
     id: 8,
     title: 'AI 인터뷰어와의 대화 경험 평가 조사',
     description: 'AI와 인터뷰를 하는 경험에 대한 인식 탐구',
-    reward: 5000,
+    reward: 1000,
     surveyLink: 'https://www.proby.io/interview?t=4tpUwos0',
     deadline: '2026-12-31',
     status: 'active',
     category: 'AI',
-    estimatedTime: '5분',
+    estimatedTime: '3~5분',
+  },
+  {
+    id: 9,
+    title: '뱅킹 앱 디자인 평가 조사',
+    description: '뱅킹 앱을 사용하실 때, 더 선호하는 디자인이 무엇인지를 이해하기 위해 기획된 조사입니다',
+    reward: 5000,
+    surveyLink: 'https://www.proby.io/interview?t=1Fw2FPzQT',
+    deadline: '2026-03-24',
+    status: 'active',
+    category: '금융',
+    estimatedTime: '15~20분',
   },
 ];
 
@@ -139,11 +150,12 @@ function initData() {
   if (!stored || stored.length === 0) {
     setStore(KEYS.listings, SAMPLE_LISTINGS);
   } else {
-    const ids = new Set(stored.map(l => l.id));
-    const toAdd = SAMPLE_LISTINGS.filter(l => !ids.has(l.id));
-    if (toAdd.length > 0) {
-      setStore(KEYS.listings, [...stored, ...toAdd]);
-    }
+    const byId = new Map(stored.map(l => [l.id, l]));
+    SAMPLE_LISTINGS.forEach(sample => {
+      const existing = byId.get(sample.id);
+      byId.set(sample.id, existing ? { ...existing, ...sample } : sample);
+    });
+    setStore(KEYS.listings, [...byId.values()]);
   }
   if (!getStore(KEYS.users)) {
     setStore(KEYS.users, []);
@@ -485,8 +497,8 @@ function renderListings() {
           <div class="flex flex-wrap gap-1.5">
             <span class="badge badge-category">${listing.category}</span>
           </div>
-          <span class="badge ${completed ? 'badge-done' : isActive ? 'badge-active' : 'badge-closed'}">
-            ${completed ? '완료' : isActive ? '모집중' : '마감'}
+          <span class="badge ${!isActive ? 'badge-closed' : completed ? 'badge-done' : 'badge-active'}">
+            ${!isActive ? '마감' : completed ? (listing.deadline ? `${formatDate(listing.deadline)} 마감` : '완료') : (listing.deadline ? formatDate(listing.deadline) : '모집중')}
           </span>
         </div>
         <div class="listing-card-body">
@@ -531,10 +543,9 @@ function renderDetail(listingId) {
     <div class="detail-hero">
       <div class="flex flex-wrap gap-2 mb-4">
         <span class="badge badge-category">${listing.category}</span>
-        <span class="badge ${isActive ? 'badge-active' : 'badge-closed'}">
-          ${isActive ? '모집중' : '마감'}
+        <span class="badge ${!isActive ? 'badge-closed' : completed ? 'badge-done' : 'badge-active'}">
+          ${!isActive ? '마감' : completed ? (listing.deadline ? formatDate(listing.deadline) + ' 마감' : '완료') : (listing.deadline ? formatDate(listing.deadline) : '모집중')}
         </span>
-        ${completed ? '<span class="badge badge-active">참여 완료</span>' : ''}
       </div>
       <h1 class="text-2xl md:text-3xl font-black tracking-tight leading-tight mb-3">
         ${listing.title}
