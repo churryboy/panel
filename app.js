@@ -322,7 +322,7 @@ function markCompleted(listingId) {
     userEmail: state.currentUser.email,
     listingId,
     completedAt: new Date().toISOString(),
-    reward: listing.reward,
+    reward: getListingReward(listing),
     title: listing.title,
   });
   setStore(KEYS.completed, completed);
@@ -497,8 +497,8 @@ function renderListings() {
           <div class="flex flex-wrap gap-1.5">
             <span class="badge badge-category">${listing.category}</span>
           </div>
-          <span class="badge ${!isActive ? 'badge-closed' : completed ? 'badge-done' : 'badge-active'}">
-            ${!isActive ? '마감' : completed ? (listing.deadline ? `${formatDate(listing.deadline)} 마감` : '완료') : (listing.deadline ? formatDate(listing.deadline) : '모집중')}
+          <span class="badge ${!isActive ? 'badge-closed' : (completed || listing.deadline) ? 'badge-done' : 'badge-active'}">
+            ${!isActive ? '마감' : completed ? (listing.deadline ? `${formatDate(listing.deadline)} 마감` : '완료') : (listing.deadline ? `${formatDate(listing.deadline)} 마감` : '모집중')}
           </span>
         </div>
         <div class="listing-card-body">
@@ -511,7 +511,7 @@ function renderListings() {
               <span class="material-symbols-outlined text-sm">schedule</span>
               ${listing.estimatedTime}
             </span>
-            <span class="font-bold text-yellow-300/90">${listing.reward.toLocaleString()}원</span>
+            <span class="font-bold text-yellow-300/90">${getListingReward(listing).toLocaleString()}원</span>
           </div>
           ${actionBtn}
         </div>
@@ -543,8 +543,8 @@ function renderDetail(listingId) {
     <div class="detail-hero">
       <div class="flex flex-wrap gap-2 mb-4">
         <span class="badge badge-category">${listing.category}</span>
-        <span class="badge ${!isActive ? 'badge-closed' : completed ? 'badge-done' : 'badge-active'}">
-          ${!isActive ? '마감' : completed ? (listing.deadline ? formatDate(listing.deadline) + ' 마감' : '완료') : (listing.deadline ? formatDate(listing.deadline) : '모집중')}
+        <span class="badge ${!isActive ? 'badge-closed' : (completed || listing.deadline) ? 'badge-done' : 'badge-active'}">
+          ${!isActive ? '마감' : completed ? (listing.deadline ? formatDate(listing.deadline) + ' 마감' : '완료') : (listing.deadline ? formatDate(listing.deadline) + ' 마감' : '모집중')}
         </span>
       </div>
       <h1 class="text-2xl md:text-3xl font-black tracking-tight leading-tight mb-3">
@@ -561,7 +561,7 @@ function renderDetail(listingId) {
           <span class="material-symbols-outlined text-accent-text text-lg">payments</span>
           <span class="text-xs font-semibold text-white/40 uppercase tracking-wider">사례비</span>
         </div>
-        <p class="text-xl font-black">${listing.reward.toLocaleString()}<span class="text-sm font-semibold text-white/40 ml-1">원</span></p>
+        <p class="text-xl font-black">${getListingReward(listing).toLocaleString()}<span class="text-sm font-semibold text-white/40 ml-1">원</span></p>
       </div>
       <div class="detail-section">
         <div class="flex items-center gap-2 mb-2">
@@ -824,6 +824,22 @@ function escapeHtml(str) {
 }
 
 // ─── Utilities ───
+// estimatedTime(예: "5분", "3~5분", "15~20분")으로 구간별 사례비 계산
+// 5분 이하=1,000원 / 5초과~15이하=3,000원 / 15초과~30이하=5,000원 / 30초과=10,000원
+function getRewardByEstimatedTime(estimatedTime) {
+  const str = String(estimatedTime || '');
+  const nums = str.match(/\d+/g);
+  const minutes = nums && nums.length ? Math.max(...nums.map(Number)) : 0;
+  if (minutes <= 5) return 1000;
+  if (minutes <= 15) return 3000;
+  if (minutes <= 30) return 5000;
+  return 10000;
+}
+
+function getListingReward(listing) {
+  return getRewardByEstimatedTime(listing.estimatedTime);
+}
+
 function formatDate(dateStr) {
   const d = new Date(dateStr);
   return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
