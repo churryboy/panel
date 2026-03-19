@@ -226,6 +226,28 @@ body {
   border-radius: 1.25rem;
 }
 
+/* ─── LISTING NOTICE (AI 화상 인터뷰 안내) ─── */
+.listing-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 1rem 1.25rem;
+  background: rgba(65, 104, 175, 0.12);
+  border: 1px solid rgba(65, 104, 175, 0.35);
+  border-radius: 0.75rem;
+}
+.listing-notice-icon {
+  flex-shrink: 0;
+  font-size: 1.5rem;
+  color: var(--accent-lt);
+}
+.listing-notice-text {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 600;
+}
+
 /* ─── LISTING CARD ─── */
 #listings-grid {
   align-items: stretch;

@@ -394,7 +394,7 @@ async function sendPayoutEmail(payout) {
     }
   }
 
-  const subject = encodeURIComponent(`[설문 패널 정산 요청] ${payout.userName} — ${payout.amount.toLocaleString()}원`);
+  const subject = encodeURIComponent(`[AI 인터뷰 조사 정산 요청] ${payout.userName} — ${payout.amount.toLocaleString()}원`);
   const body = encodeURIComponent(
     `정산 요청이 접수되었습니다.\n\n` +
     `이름: ${payout.userName}\n` +

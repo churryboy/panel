@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Proby 설문 패널</title>
+  <title>Proby AI 인터뷰 조사</title>
 
   <!-- Tailwind: use built CSS (run npm run build:css). Do not open via file:// — use a local server (npm run serve or python3 -m http.server). -->
   <link rel="stylesheet" href="dist/tailwind.css" />
@@ -35,8 +35,8 @@
             </div>
             <span class="text-lg font-bold tracking-tight">Proby</span>
           </div>
-          <h1 class="text-2xl font-black tracking-tight mb-2">설문 패널</h1>
-          <p class="text-white/50 text-sm">로그인하여 설문에 참여하세요</p>
+          <h1 class="text-2xl font-black tracking-tight mb-2">AI 인터뷰 조사</h1>
+          <p class="text-white/50 text-sm">로그인하여 AI 인터뷰에 참여하세요</p>
         </div>
 
         <div class="space-y-4 mb-6">
@@ -128,7 +128,7 @@
           <div class="w-8 h-8 rounded-lg bg-accent flex items-center justify-center">
             <span class="material-symbols-outlined text-white text-lg" style="font-variation-settings:'FILL'1">poll</span>
           </div>
-          <span class="text-base font-bold tracking-tight">설문 패널</span>
+          <span class="text-base font-bold tracking-tight">AI 인터뷰 조사</span>
         </div>
         <div class="flex items-center gap-3">
           <button id="btn-profile" class="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-white/5 transition-colors group">
@@ -150,7 +150,7 @@
       <div class="max-w-[1600px] mx-auto px-6 md:px-16 flex gap-1">
         <button class="tab active" data-tab="listings">
           <span class="material-symbols-outlined text-lg">assignment</span>
-          공고
+          AI 인터뷰 조사 공고
         </button>
         <button class="tab" data-tab="settlement">
           <span class="material-symbols-outlined text-lg">account_balance_wallet</span>
@@ -169,24 +169,28 @@
 
         <!-- ─── LISTINGS VIEW ─── -->
         <div id="listings-view" class="content-panel">
-          <div class="flex items-center justify-between mb-8">
+          <div class="flex items-center justify-between mb-6">
             <div>
-              <h2 class="text-xl font-black tracking-tight">설문 공고</h2>
-              <p class="text-sm text-white/40 mt-1">참여 가능한 설문 조사를 확인하세요</p>
+              <h2 class="text-xl font-black tracking-tight">AI 인터뷰 조사 공고</h2>
+              <p class="text-sm text-white/40 mt-1">참여가능한 AI 인터뷰를 확인하세요</p>
             </div>
             <div class="flex items-center gap-2">
               <div class="relative">
                 <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-white/30 text-lg" style="pointer-events:none">search</span>
-                <input type="text" id="search-input" class="sf-input pr-4 py-2 text-sm w-[240px]" style="padding-left:2.4rem" placeholder="설문 검색...">
+                <input type="text" id="search-input" class="sf-input pr-4 py-2 text-sm w-[240px]" style="padding-left:2.4rem" placeholder="AI 인터뷰 검색...">
               </div>
             </div>
+          </div>
+          <div class="listing-notice mb-6" role="alert">
+            <span class="material-symbols-outlined listing-notice-icon">videocam</span>
+            <p class="listing-notice-text">여기 올라오는 조사들은 AI와 진행하는 화상 인터뷰입니다. 카메라는 키고 진행해주셔야 하며, 명확한 음성 인식을 위해 반드시 조용한 공간에서 진행해주시기 바랍니다.</p>
           </div>
           <div id="listings-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
             <!-- Dynamically rendered -->
           </div>
           <div id="listings-empty" class="empty-state hidden">
             <span class="material-symbols-outlined text-5xl text-white/20 mb-4">inbox</span>
-            <p class="text-white/40 text-sm">현재 참여 가능한 설문이 없습니다</p>
+            <p class="text-white/40 text-sm">현재 참여 가능한 AI 인터뷰가 없습니다</p>
           </div>
         </div>
 
@@ -247,7 +251,7 @@
           <div id="settlement-empty" class="empty-state hidden">
             <span class="material-symbols-outlined text-5xl text-white/20 mb-4">receipt_long</span>
             <p class="text-white/40 text-sm">완료된 설문이 없습니다</p>
-            <p class="text-white/30 text-xs mt-1">공고 탭에서 설문에 참여해 보세요</p>
+            <p class="text-white/30 text-xs mt-1">공고 탭에서 AI 인터뷰에 참여해 보세요</p>
           </div>
         </div>
 
