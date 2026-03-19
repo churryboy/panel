@@ -141,6 +141,21 @@ body {
   transition: background 0.2s, border-color 0.2s;
 }
 
+.btn-add-listing {
+  padding: 0.55rem 0.95rem;
+  font-size: 0.75rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.btn-add-listing__icon {
+  font-size: 1.05rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .btn-ghost:hover {
   background: rgba(65, 104, 175, 0.12);
   border-color: rgba(65, 104, 175, 0.55);
@@ -248,8 +263,18 @@ body {
   font-weight: 600;
 }
 
-/* ─── LISTING CARD ─── */
-#listings-grid {
+/* ─── LISTING SECTIONS ─── */
+.listings-section-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.85);
+  margin-bottom: 1rem;
+  letter-spacing: 0.02em;
+}
+
+#listings-grid,
+#listings-grid-active,
+#listings-grid-closed {
   align-items: stretch;
 }
 
@@ -298,15 +323,28 @@ body {
 }
 
 .listing-card-footer {
-  padding: 0 1.25rem;
-  height: 60px;
+  padding: 0.75rem 1.25rem 1rem;
   border-top: 1px solid rgba(37, 37, 45, 0.4);
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 0.5rem;
   flex-shrink: 0;
   margin-top: auto;
   box-sizing: border-box;
+}
+
+.listing-card-footer-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.listing-card-footer-cta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
 }
 
 /* ─── BADGES & TAGS ─── */
@@ -406,6 +444,34 @@ body {
   color: #fdba74;
 }
 
+.badge-settlement-done {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border-radius: 999px;
+  white-space: nowrap;
+  background: rgba(34, 197, 94, 0.15);
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  color: #86efac;
+}
+
+.badge-review {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border-radius: 999px;
+  white-space: nowrap;
+  background: rgba(65, 104, 175, 0.2);
+  border: 1px solid rgba(65, 104, 175, 0.4);
+  color: var(--accent-lt);
+}
+
 /* ─── DETAIL VIEW ─── */
 .detail-hero {
   background: linear-gradient(135deg, rgba(40, 64, 110, 0.2), rgba(25, 25, 30, 0.95));
@@ -503,6 +569,11 @@ body {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.875rem;
+}
+
+.users-table-nowrap th,
+.users-table-nowrap td {
+  white-space: nowrap;
 }
 
 .users-table th,

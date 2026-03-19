@@ -29,10 +29,12 @@ const SAMPLE_LISTINGS = [
     description: '20~30대의 금융 생활 패턴과 은행 서비스 이용 행태를 파악하기 위한 설문조사입니다. 주 거래 은행, 모바일 뱅킹 이용 빈도, 투자·저축 습관 등에 대한 질문으로 구성되어 있습니다.',
     reward: 5000,
     surveyLink: 'https://forms.gle/example1',
-    deadline: '2026-04-15',
+    deadline: '2026-03-15',
     status: 'closed',
     category: '금융',
     estimatedTime: '15분',
+    maxParticipants: 100,
+    currentParticipants: 100,
   },
   {
     id: 2,
@@ -40,10 +42,12 @@ const SAMPLE_LISTINGS = [
     description: '국내 주요 외식 브랜드에 대한 인지도, 방문 빈도, 메뉴 선호도를 조사합니다. 최근 3개월 내 외식 경험이 있는 분이라면 누구나 참여 가능합니다.',
     reward: 3000,
     surveyLink: 'https://forms.gle/example2',
-    deadline: '2026-04-10',
+    deadline: '2026-03-10',
     status: 'closed',
     category: '외식·F&B',
     estimatedTime: '10분',
+    maxParticipants: 80,
+    currentParticipants: 80,
   },
   {
     id: 3,
@@ -51,10 +55,12 @@ const SAMPLE_LISTINGS = [
     description: '최근 2년 내 자동차를 구매하신 분들을 대상으로, 구매 과정에서의 정보 탐색 경로, 딜러십 경험, 브랜드 선택 요인 등을 심층적으로 파악합니다.',
     reward: 8000,
     surveyLink: 'https://forms.gle/example3',
-    deadline: '2026-05-01',
+    deadline: '2026-03-01',
     status: 'closed',
     category: '자동차',
     estimatedTime: '20분',
+    maxParticipants: 50,
+    currentParticipants: 50,
   },
   {
     id: 4,
@@ -62,10 +68,12 @@ const SAMPLE_LISTINGS = [
     description: '재택근무 또는 하이브리드 근무를 경험한 직장인을 대상으로, 업무 환경 만족도와 생산성 변화를 조사합니다.',
     reward: 4000,
     surveyLink: 'https://forms.gle/example4',
-    deadline: '2026-04-20',
+    deadline: '2026-02-20',
     status: 'closed',
     category: '근무환경',
     estimatedTime: '12분',
+    maxParticipants: 60,
+    currentParticipants: 60,
   },
   {
     id: 5,
@@ -73,10 +81,12 @@ const SAMPLE_LISTINGS = [
     description: '건강 관리 앱, 운동 기록 앱, 식단 관리 앱 등 디지털 헬스케어 서비스 이용 현황과 만족도를 파악합니다.',
     reward: 3500,
     surveyLink: 'https://forms.gle/example5',
-    deadline: '2026-03-25',
+    deadline: '2026-03-02',
     status: 'closed',
     category: '헬스케어',
     estimatedTime: '8분',
+    maxParticipants: 70,
+    currentParticipants: 70,
   },
   {
     id: 6,
@@ -84,10 +94,12 @@ const SAMPLE_LISTINGS = [
     description: '넷플릭스, 웨이브, 쿠팡플레이 등 OTT 서비스 이용 행태와 콘텐츠 소비 패턴을 파악하는 설문입니다.',
     reward: 4500,
     surveyLink: 'https://forms.gle/example6',
-    deadline: '2026-04-30',
+    deadline: '2026-02-30',
     status: 'closed',
     category: '미디어·콘텐츠',
     estimatedTime: '15분',
+    maxParticipants: 90,
+    currentParticipants: 90,
   },
   {
     id: 8,
@@ -99,6 +111,8 @@ const SAMPLE_LISTINGS = [
     status: 'active',
     category: 'AI',
     estimatedTime: '3~5분',
+    maxParticipants: 100,
+    currentParticipants: 0,
   },
   {
     id: 9,
@@ -110,6 +124,8 @@ const SAMPLE_LISTINGS = [
     status: 'active',
     category: '금융',
     estimatedTime: '15~20분',
+    maxParticipants: 5,
+    currentParticipants: 0,
   },
 ];
 
@@ -128,6 +144,7 @@ const KEYS = {
   listings: 'sp_listings',
   completed: 'sp_completed',
   payouts: 'sp_payouts',
+  settlementCompleted: 'sp_settlement_completed',
 };
 
 // ─── Storage Helpers ───
@@ -165,14 +182,7 @@ function getDistinctId() {
   }
 }
 
-function trackSurveyClick(payload) {
-  var eventName = '클릭 - ' + (payload.title || '제목 없음');
-  var props = {
-    title: payload.title,
-    listing_id: payload.listing_id,
-    category: payload.category || '',
-    source: payload.source || 'card',
-  };
+function sendMixpanelEvent(eventName, props) {
   var distinctId = getDistinctId();
   if (typeof window.mixpanel !== 'undefined' && window.mixpanel.track) {
     try {
@@ -199,6 +209,29 @@ function trackSurveyClick(payload) {
   } catch (e) {}
 }
 
+function trackSurveyClick(payload) {
+  sendMixpanelEvent('클릭 - ' + (payload.title || '제목 없음'), {
+    title: payload.title,
+    listing_id: payload.listing_id,
+    category: payload.category || '',
+    source: payload.source || 'card',
+  });
+}
+
+/** 관리자가 조사 추가 모달로 새 공고를 생성했을 때 */
+function trackListingCreated(listing) {
+  if (!listing) return;
+  sendMixpanelEvent('조사 생성 - ' + (listing.title || '제목 없음'), {
+    title: listing.title,
+    listing_id: listing.id,
+    category: listing.category || '',
+    deadline: listing.deadline || '',
+    max_participants: listing.maxParticipants,
+    estimated_time: listing.estimatedTime || '',
+    source: 'admin_create',
+  });
+}
+
 // ─── Data Initialization ───
 function initData() {
   const stored = getStore(KEYS.listings);
@@ -220,6 +253,9 @@ function initData() {
   }
   if (!getStore(KEYS.payouts)) {
     setStore(KEYS.payouts, []);
+  }
+  if (!getStore(KEYS.settlementCompleted)) {
+    setStore(KEYS.settlementCompleted, []);
   }
 }
 
@@ -361,6 +397,61 @@ function getListingById(id) {
   return getListings().find(l => l.id === id);
 }
 
+function getDeadlineEndTime(deadline) {
+  if (!deadline) return NaN;
+  const d = new Date(deadline);
+  d.setHours(23, 59, 59, 999);
+  return d.getTime();
+}
+
+function getListingParticipantCount(listingId, listing) {
+  if (listing && typeof listing.currentParticipants === 'number') {
+    return listing.currentParticipants;
+  }
+  const participants = new Set(
+    getCompleted()
+      .filter(c => c.listingId === listingId)
+      .map(c => c.userEmail)
+  );
+  return participants.size;
+}
+
+// 마감 조건: 데드라인 지남 OR 참여인원 마감 (둘 중 하나만 해당해도 마감)
+function isListingClosed(listing) {
+  if (!listing) return true;
+  const deadlinePassed = Date.now() > getDeadlineEndTime(listing.deadline);
+  const maxParticipants = Number(listing.maxParticipants) || 0;
+  const isFull = maxParticipants > 0 && getListingParticipantCount(listing.id, listing) >= maxParticipants;
+  return deadlinePassed || isFull; // OR 조건
+}
+
+// ─── Settlement completed (정산완료) ───
+// 저장 형식: [{ email, completedAt }, ...]. 레거시: [email, ...] → completedAt 과거로 간주
+function getSettlementCompleted() {
+  const raw = getStore(KEYS.settlementCompleted, []);
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+  return raw.map(entry =>
+    typeof entry === 'string'
+      ? { email: entry, completedAt: new Date(0).toISOString() }
+      : { email: entry.email, completedAt: entry.completedAt || new Date(0).toISOString() }
+  );
+}
+
+function getSettlementCompletedAt(email) {
+  const list = getSettlementCompleted();
+  const found = list.find(e => e.email === email);
+  return found ? found.completedAt : null;
+}
+
+function isSettlementCompleted(email) {
+  return getSettlementCompletedAt(email) !== null;
+}
+
+function markSettlementCompleted(email) {
+  const list = getSettlementCompleted().filter(e => e.email !== email);
+  setStore(KEYS.settlementCompleted, [...list, { email, completedAt: new Date().toISOString() }]);
+}
+
 // ─── Completed Surveys ───
 function getCompleted() {
   return getStore(KEYS.completed, []);
@@ -375,6 +466,7 @@ function markCompleted(listingId) {
   if (!state.currentUser) return;
   const listing = getListingById(listingId);
   if (!listing) return;
+  if (isListingClosed(listing)) return;
 
   const completed = getCompleted();
   const exists = completed.find(
@@ -408,6 +500,9 @@ function getUserPayouts() {
 }
 
 function getUnpaidTotal() {
+  if (state.currentUser && isSettlementCompleted(state.currentUser.email)) {
+    return 0;
+  }
   const completed = getUserCompleted();
   const payouts = getUserPayouts();
   const paidTotal = payouts.reduce((sum, p) => sum + p.amount, 0);
@@ -517,10 +612,62 @@ function switchTab(tab) {
 
 
 // ─── Render: Listings ───
+function buildListingCard(listing) {
+  const completed = isCompleted(listing.id);
+  const participants = getListingParticipantCount(listing.id, listing);
+  const maxParticipants = Number(listing.maxParticipants) || 0;
+  const isActive = !isListingClosed(listing);
+  const actionBtn = completed
+    ? `<button class="card-btn-done" disabled>
+         <span class="material-symbols-outlined text-base" style="font-variation-settings:'FILL'1">check_circle</span>
+         검토 중
+       </button>`
+    : isActive
+      ? `<a href="${listing.surveyLink}" target="_blank" rel="noopener noreferrer"
+            class="card-btn-survey" data-id="${listing.id}">
+           <span class="material-symbols-outlined text-base">open_in_new</span>
+           설문 참여
+         </a>`
+      : `<span class="card-btn-closed">마감됨</span>`;
+  return `
+    <div class="listing-card${completed ? ' listing-card--done' : ''}">
+      <div class="listing-card-header">
+        <div class="flex flex-wrap gap-1.5">
+          <span class="badge badge-category">${listing.category}</span>
+        </div>
+        <span class="badge ${!isActive ? 'badge-closed' : (completed || listing.deadline) ? 'badge-done' : 'badge-active'}">
+          ${!isActive ? '마감' : completed ? (listing.deadline ? `${formatDate(listing.deadline)} 마감` : '검토 중') : (listing.deadline ? `${formatDate(listing.deadline)} 마감` : '모집중')}
+        </span>
+      </div>
+      <div class="listing-card-body">
+        <h3 class="text-sm font-bold leading-snug mb-1.5">${listing.title}</h3>
+        <p class="text-xs text-white/45 leading-relaxed line-clamp-2">${listing.description}</p>
+      </div>
+      <div class="listing-card-footer">
+        <div class="listing-card-footer-row">
+          <span class="flex items-center gap-1">
+            <span class="material-symbols-outlined text-sm">schedule</span>
+            ${listing.estimatedTime}
+          </span>
+          ${maxParticipants > 0 ? `<span class="flex items-center gap-1"><span class="material-symbols-outlined text-sm">group</span>${Math.min(participants, maxParticipants).toLocaleString()}/${maxParticipants.toLocaleString()}명</span>` : ''}
+          <span class="font-bold text-yellow-300/90">${getListingReward(listing).toLocaleString()}원</span>
+        </div>
+        <div class="listing-card-footer-cta">${actionBtn}</div>
+      </div>
+    </div>
+  `;
+}
+
 function renderListings() {
-  const grid = document.getElementById('listings-grid');
-  const empty = document.getElementById('listings-empty');
+  const sectionsEl = document.getElementById('listings-sections');
+  const emptyEl = document.getElementById('listings-empty');
+  const gridActive = document.getElementById('listings-grid-active');
+  const gridClosed = document.getElementById('listings-grid-closed');
+  const emptyActive = document.getElementById('listings-active-empty');
+  const emptyClosed = document.getElementById('listings-closed-empty');
   const query = state.searchQuery.toLowerCase().trim();
+  const btnAdd = document.getElementById('btn-add-listing');
+  if (btnAdd) btnAdd.classList.toggle('hidden', !isAdmin());
 
   let listings = getListings();
   if (query) {
@@ -531,67 +678,42 @@ function renderListings() {
     );
   }
 
+  const activeListings = listings.filter(l => !isListingClosed(l));
+  const closedListings = listings.filter(l => isListingClosed(l));
+
   if (listings.length === 0) {
-    grid.innerHTML = '';
-    empty.classList.remove('hidden');
+    if (sectionsEl) sectionsEl.classList.add('hidden');
+    if (emptyEl) emptyEl.classList.remove('hidden');
     return;
   }
 
-  empty.classList.add('hidden');
-  grid.innerHTML = listings.map(listing => {
-    const completed = isCompleted(listing.id);
-    const isActive = listing.status === 'active';
+  if (emptyEl) emptyEl.classList.add('hidden');
+  if (sectionsEl) sectionsEl.classList.remove('hidden');
 
-    const actionBtn = completed
-      ? `<button class="card-btn-done" disabled>
-           <span class="material-symbols-outlined text-base" style="font-variation-settings:'FILL'1">check_circle</span>
-           설문 완료
-         </button>`
-      : isActive
-        ? `<a href="${listing.surveyLink}" target="_blank" rel="noopener noreferrer"
-              class="card-btn-survey" data-id="${listing.id}">
-             <span class="material-symbols-outlined text-base">open_in_new</span>
-             설문 참여
-           </a>`
-        : `<span class="card-btn-closed">마감됨</span>`;
+  if (gridActive) {
+    gridActive.innerHTML = activeListings.map(buildListingCard).join('');
+    gridActive.classList.toggle('hidden', activeListings.length === 0);
+  }
+  if (emptyActive) {
+    emptyActive.classList.toggle('hidden', activeListings.length > 0);
+  }
+  if (gridClosed) {
+    gridClosed.innerHTML = closedListings.map(buildListingCard).join('');
+    gridClosed.classList.toggle('hidden', closedListings.length === 0);
+  }
+  if (emptyClosed) {
+    emptyClosed.classList.toggle('hidden', closedListings.length > 0);
+  }
 
-    return `
-      <div class="listing-card${completed ? ' listing-card--done' : ''}">
-        <div class="listing-card-header">
-          <div class="flex flex-wrap gap-1.5">
-            <span class="badge badge-category">${listing.category}</span>
-          </div>
-          <span class="badge ${!isActive ? 'badge-closed' : (completed || listing.deadline) ? 'badge-done' : 'badge-active'}">
-            ${!isActive ? '마감' : completed ? (listing.deadline ? `${formatDate(listing.deadline)} 마감` : '완료') : (listing.deadline ? `${formatDate(listing.deadline)} 마감` : '모집중')}
-          </span>
-        </div>
-        <div class="listing-card-body">
-          <h3 class="text-sm font-bold leading-snug mb-1.5">${listing.title}</h3>
-          <p class="text-xs text-white/45 leading-relaxed line-clamp-2">${listing.description}</p>
-        </div>
-        <div class="listing-card-footer">
-          <div class="flex items-center gap-3 text-xs text-white/40">
-            <span class="flex items-center gap-1">
-              <span class="material-symbols-outlined text-sm">schedule</span>
-              ${listing.estimatedTime}
-            </span>
-            <span class="font-bold text-yellow-300/90">${getListingReward(listing).toLocaleString()}원</span>
-          </div>
-          ${actionBtn}
-        </div>
-      </div>
-    `;
-  }).join('');
-
-  // 설문 참여 클릭 → 완료 처리 + Mixpanel 로깅
-  grid.querySelectorAll('.card-btn-survey').forEach(btn => {
-    btn.addEventListener('click', e => {
+  const container = sectionsEl || document.body;
+  container.querySelectorAll('.card-btn-survey').forEach(btn => {
+    btn.addEventListener('click', () => {
       const id = Number(btn.dataset.id);
       const listing = getListingById(id);
       if (listing) trackSurveyClick({ title: listing.title, listing_id: listing.id, category: listing.category, source: 'card' });
       markCompleted(id);
       renderListings();
-      showToast('설문 완료로 기록되었습니다!');
+      showToast('검토 중으로 기록되었습니다.');
     });
   });
 }
@@ -602,7 +724,7 @@ function renderDetail(listingId) {
   if (!listing) return;
 
   const completed = isCompleted(listingId);
-  const isActive = listing.status === 'active';
+  const isActive = !isListingClosed(listing);
   const container = document.getElementById('detail-content');
 
   container.innerHTML = `
@@ -610,7 +732,7 @@ function renderDetail(listingId) {
       <div class="flex flex-wrap gap-2 mb-4">
         <span class="badge badge-category">${listing.category}</span>
         <span class="badge ${!isActive ? 'badge-closed' : (completed || listing.deadline) ? 'badge-done' : 'badge-active'}">
-          ${!isActive ? '마감' : completed ? (listing.deadline ? formatDate(listing.deadline) + ' 마감' : '완료') : (listing.deadline ? formatDate(listing.deadline) + ' 마감' : '모집중')}
+          ${!isActive ? '마감' : completed ? (listing.deadline ? formatDate(listing.deadline) + ' 마감' : '검토 중') : (listing.deadline ? formatDate(listing.deadline) + ' 마감' : '모집중')}
         </span>
       </div>
       <h1 class="text-2xl md:text-3xl font-black tracking-tight leading-tight mb-3">
@@ -653,12 +775,12 @@ function renderDetail(listingId) {
         </a>
         <button class="btn-complete" data-listing-id="${listing.id}">
           <span class="material-symbols-outlined">check_circle</span>
-          설문 완료 표시
+          참여 완료 표시
         </button>
       ` : completed ? `
-        <div class="flex items-center gap-2 text-green-400 text-sm font-semibold">
-          <span class="material-symbols-outlined">verified</span>
-          이 설문에 이미 참여하셨습니다
+        <div class="flex items-center gap-2 text-accent-lt text-sm font-semibold">
+          <span class="material-symbols-outlined">schedule</span>
+          검토 중
         </div>
       ` : `
         <div class="flex items-center gap-2 text-white/40 text-sm font-semibold">
@@ -674,7 +796,7 @@ function renderDetail(listingId) {
     completeBtn.addEventListener('click', () => {
       markCompleted(listingId);
       renderDetail(listingId);
-      showToast('설문 완료가 기록되었습니다!');
+      showToast('검토 중으로 기록되었습니다.');
     });
   }
   const surveyLinkEl = container.querySelector('.btn-survey');
@@ -690,13 +812,11 @@ function renderSettlement() {
   const list = document.getElementById('settlement-list');
   const empty = document.getElementById('settlement-empty');
   const totalEl = document.getElementById('total-amount');
-  const payoutBtn = document.getElementById('btn-request-payout');
 
   const completed = getUserCompleted();
   const unpaidTotal = getUnpaidTotal();
 
-  totalEl.textContent = unpaidTotal.toLocaleString();
-  payoutBtn.disabled = unpaidTotal <= 0;
+  if (totalEl) totalEl.textContent = unpaidTotal.toLocaleString();
 
   // 계좌정보 카드 렌더링
   const bankCard = document.getElementById('bank-info-card');
@@ -765,22 +885,32 @@ function renderSettlement() {
   empty.classList.add('hidden');
 
   const payoutHistory = getUserPayouts();
+  const settledAt = state.currentUser ? getSettlementCompletedAt(state.currentUser.email) : null;
 
   list.innerHTML =
-    completed.map(c => `
+    completed.map(c => {
+      const completedTime = c.completedAt ? new Date(c.completedAt).getTime() : 0;
+      const settledTime = settledAt ? new Date(settledAt).getTime() : 0;
+      const isLegacySettled = settledTime < 1e12; // 예전 형식(날짜 없음)이면 전체 배지
+      const showBadge = settledAt && (isLegacySettled || completedTime < settledTime);
+      return `
       <div class="settlement-item">
         <div class="flex items-center gap-3">
           <div class="w-10 h-10 rounded-xl bg-accent-dim/40 border border-accent-hi/20 flex items-center justify-center flex-shrink-0">
             <span class="material-symbols-outlined text-accent-text text-lg">description</span>
           </div>
           <div>
-            <p class="text-sm font-semibold leading-tight">${c.title}</p>
+            <p class="text-sm font-semibold leading-tight flex items-center gap-2 flex-wrap">
+              ${c.title}
+              ${showBadge ? '<span class="badge-settlement-done">정산 완료</span>' : '<span class="badge-review">검토중</span>'}
+            </p>
             <p class="text-xs text-white/35 mt-0.5">${formatDate(c.completedAt)}</p>
           </div>
         </div>
         <span class="text-sm font-bold text-yellow-300/90 whitespace-nowrap">+${c.reward.toLocaleString()}원</span>
       </div>
-    `).join('') +
+    `;
+    }).join('') +
     (payoutHistory.length > 0 ? `
       <div class="mt-8 mb-4">
         <h3 class="text-sm font-bold text-white/60 uppercase tracking-wider">정산 요청 내역</h3>
@@ -810,6 +940,7 @@ function renderUsers() {
 
   const users = getUsers();
   const completed = getCompleted();
+  const listings = getListings();
 
   const byEmail = {};
   completed.forEach(c => {
@@ -818,18 +949,81 @@ function renderUsers() {
     byEmail[c.userEmail].total += c.reward;
   });
 
+  const activeListings = (listings || [])
+    .filter(l => l && !isListingClosed(l))
+    .sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
+
+  const participantsByListingId = {};
+  completed.forEach(c => {
+    const id = Number(c.listingId);
+    if (!id) return;
+    if (!participantsByListingId[id]) participantsByListingId[id] = new Set();
+    participantsByListingId[id].add(c.userEmail);
+  });
+
+  const participantSectionHtml =
+    activeListings.length === 0
+      ? `<div class="px-6 py-8 text-sm text-white/40">진행중인 조사가 없습니다</div>`
+      : activeListings.map(listing => {
+          const set = participantsByListingId[listing.id] || new Set();
+          const emails = Array.from(set);
+          const rows = emails.map(email => {
+            const u = users.find(x => x.email === email);
+            const name = u?.name || '—';
+            const phoneDisplay = u?.phone ? u.phone.replace(/(\d{3})(\d{3,4})(\d{4})/, '$1-$2-$3') : '—';
+            return `
+            <tr>
+              <td>${escapeHtml(name)}</td>
+              <td class="text-white/60">${escapeHtml(email)}</td>
+              <td class="text-white/60">${escapeHtml(phoneDisplay)}</td>
+            </tr>
+          `;
+          }).join('');
+
+          return `
+          <div class="mb-8 last:mb-0 px-6 pt-6">
+            <div class="flex items-center justify-between gap-3 mb-3">
+              <div class="min-w-0">
+                <p class="text-sm font-bold truncate">${escapeHtml(listing.title || '제목 없음')}</p>
+                <p class="text-xs text-white/35 mt-0.5">
+                  참여자 ${emails.length.toLocaleString()}명
+                  ${listing.maxParticipants ? ` / 최종모수 ${Number(listing.maxParticipants).toLocaleString()}명` : ''}
+                </p>
+              </div>
+              <span class="badge badge-active">진행중</span>
+            </div>
+            <div class="overflow-x-auto rounded-xl border border-white/5">
+              <table class="users-table users-table-nowrap">
+                <thead>
+                  <tr>
+                    <th>이름</th>
+                    <th>이메일</th>
+                    <th>전화번호</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${rows || `<tr><td class="text-white/40" colspan="3">참여자가 없습니다</td></tr>`}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        `;
+        }).join('');
+
   if (users.length === 0) {
     container.innerHTML = '';
     if (empty) empty.classList.remove('hidden');
-    return;
-  }
-
-  if (empty) empty.classList.add('hidden');
-  container.innerHTML = `
+  } else {
+    if (empty) empty.classList.add('hidden');
+    container.innerHTML = `
     <div class="overflow-x-auto">
-      <table class="users-table">
+      <table class="users-table users-table-nowrap">
         <thead>
           <tr>
+            <th>총 사례비</th>
+            <th>은행명</th>
+            <th>계좌번호</th>
+            <th>정산완료</th>
             <th>이름</th>
             <th>이메일</th>
             <th>전화번호</th>
@@ -838,20 +1032,28 @@ function renderUsers() {
             <th>성별</th>
             <th>직업</th>
             <th>완료 설문</th>
-            <th>총 사례비</th>
-            <th>은행명</th>
-            <th>계좌번호</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
           ${users.map(u => {
             const stat = byEmail[u.email] || { count: 0, total: 0 };
+            const displayTotal = isSettlementCompleted(u.email) ? 0 : stat.total;
             const joined = u.createdAt ? formatDate(u.createdAt) : '—';
             const isMe = u.email === state.currentUser.email;
             const phoneDisplay = u.phone ? u.phone.replace(/(\d{3})(\d{3,4})(\d{4})/, '$1-$2-$3') : '—';
+            const settled = isSettlementCompleted(u.email);
             return `
               <tr>
+                <td class="text-yellow-300/80">${displayTotal.toLocaleString()}원</td>
+                <td class="text-white/60">${escapeHtml(u.bankName || '—')}</td>
+                <td class="text-white/60">${escapeHtml(u.bankAccount || '—')}</td>
+                <td>
+                  ${settled
+                    ? '<span class="text-white/40 text-xs">완료</span>'
+                    : `<button class="btn-settlement-done text-xs font-bold text-accent-lt hover:text-white transition-colors px-2 py-1 rounded hover:bg-accent/20" data-email="${escapeHtml(u.email)}">정산완료</button>`
+                  }
+                </td>
                 <td>${escapeHtml(u.name)}</td>
                 <td class="text-white/60">${escapeHtml(u.email)}</td>
                 <td class="text-white/60">${escapeHtml(phoneDisplay)}</td>
@@ -860,9 +1062,6 @@ function renderUsers() {
                 <td class="text-white/60">${escapeHtml(u.gender || '—')}</td>
                 <td class="text-white/60">${escapeHtml(u.job || '—')}</td>
                 <td>${stat.count}건</td>
-                <td class="text-yellow-300/80">${stat.total.toLocaleString()}원</td>
-                <td class="text-white/60">${escapeHtml(u.bankName || '—')}</td>
-                <td class="text-white/60">${escapeHtml(u.bankAccount || '—')}</td>
                 <td>
                   ${isMe ? '' : `
                     <button class="btn-delete-user text-xs font-bold text-red-400/70 hover:text-red-400 transition-colors px-2 py-1 rounded hover:bg-red-400/10"
@@ -876,16 +1075,28 @@ function renderUsers() {
       </table>
     </div>
   `;
-
-  container.querySelectorAll('.btn-delete-user').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const email = btn.dataset.email;
-      if (!confirm(`"${email}" 유저를 삭제하시겠습니까?`)) return;
-      deleteUser(email);
-      renderUsers();
-      showToast('유저가 삭제되었습니다.');
+    container.querySelectorAll('.btn-settlement-done').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const email = btn.dataset.email;
+        if (!confirm(`"${email}" 유저의 정산을 완료 처리하시겠습니까? 합산 금액이 0으로 표시됩니다.`)) return;
+        markSettlementCompleted(email);
+        renderUsers();
+        showToast('정산 완료 처리되었습니다.');
+      });
     });
-  });
+    container.querySelectorAll('.btn-delete-user').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const email = btn.dataset.email;
+        if (!confirm(`"${email}" 유저를 삭제하시겠습니까?`)) return;
+        deleteUser(email);
+        renderUsers();
+        showToast('유저가 삭제되었습니다.');
+      });
+    });
+  }
+
+  const participantsEl = document.getElementById('users-participants');
+  if (participantsEl) participantsEl.innerHTML = participantSectionHtml;
 }
 
 function escapeHtml(str) {
@@ -939,6 +1150,77 @@ function hideError(elementId) {
   const el = document.getElementById(elementId);
   el.textContent = '';
   el.classList.add('hidden');
+}
+
+// ─── Admin: Add listing ───
+function openAddListingModal() {
+  if (!isAdmin()) return;
+  hideError('add-listing-error');
+  const modal = document.getElementById('add-listing-modal');
+  if (!modal) return;
+
+  const today = new Date();
+  const yyyy = today.getFullYear();
+  const mm = String(today.getMonth() + 1).padStart(2, '0');
+  const dd = String(today.getDate()).padStart(2, '0');
+
+  document.getElementById('listing-title').value = '';
+  document.getElementById('listing-category').value = '';
+  document.getElementById('listing-estimatedTime').value = '';
+  document.getElementById('listing-description').value = '';
+  document.getElementById('listing-surveyLink').value = '';
+  document.getElementById('listing-deadline').value = `${yyyy}-${mm}-${dd}`;
+  document.getElementById('listing-maxParticipants').value = '';
+
+  modal.classList.remove('hidden');
+}
+
+function closeAddListingModal() {
+  const modal = document.getElementById('add-listing-modal');
+  if (!modal) return;
+  modal.classList.add('hidden');
+}
+
+function createListingFromModal() {
+  if (!isAdmin()) return { ok: false, error: '권한이 없습니다.' };
+
+  const title = document.getElementById('listing-title')?.value.trim();
+  const category = document.getElementById('listing-category')?.value.trim();
+  const estimatedTime = document.getElementById('listing-estimatedTime')?.value.trim();
+  const description = document.getElementById('listing-description')?.value.trim();
+  const surveyLink = document.getElementById('listing-surveyLink')?.value.trim();
+  const deadline = document.getElementById('listing-deadline')?.value;
+  const maxParticipantsRaw = document.getElementById('listing-maxParticipants')?.value;
+  const maxParticipants = Number(maxParticipantsRaw);
+
+  if (!title) return { ok: false, error: '조사명을 입력하세요.' };
+  if (!category) return { ok: false, error: '카테고리를 입력하세요.' };
+  if (!estimatedTime) return { ok: false, error: '예상 소요시간을 입력하세요.' };
+  if (!description) return { ok: false, error: '설명을 입력하세요.' };
+  if (!surveyLink) return { ok: false, error: '설문 링크를 입력하세요.' };
+  if (!deadline) return { ok: false, error: '마감일을 입력하세요.' };
+  if (!Number.isFinite(maxParticipants) || maxParticipants <= 0) return { ok: false, error: '최종 모수(명)를 올바르게 입력하세요.' };
+
+  const current = getStore(KEYS.listings, SAMPLE_LISTINGS) || [];
+  const maxId = current.reduce((m, l) => Math.max(m, Number(l?.id) || 0), 0);
+  const id = maxId + 1;
+
+  const listing = {
+    id,
+    title,
+    description,
+    surveyLink,
+    deadline,
+    status: 'active',
+    category,
+    estimatedTime,
+    maxParticipants,
+    currentParticipants: 0,
+  };
+
+  setStore(KEYS.listings, [listing, ...current]);
+  trackListingCreated(listing);
+  return { ok: true, listing };
 }
 
 // ─── Profile Panel ───
@@ -1163,8 +1445,7 @@ function bindEvents() {
     renderListings();
   });
 
-  // Payout
-  document.getElementById('btn-request-payout').addEventListener('click', openPayoutModal);
+  // Payout modal (정산받기 버튼 제거됨 — 모달은 필요 시 다른 진입점에서 사용 가능)
   document.getElementById('btn-close-modal').addEventListener('click', closePayoutModal);
   document.getElementById('btn-submit-payout').addEventListener('click', submitPayout);
 
@@ -1172,11 +1453,34 @@ function bindEvents() {
     if (e.target === e.currentTarget) closePayoutModal();
   });
 
+  // Admin: Add listing
+  const btnAdd = document.getElementById('btn-add-listing');
+  if (btnAdd) btnAdd.addEventListener('click', openAddListingModal);
+  const btnCloseAdd = document.getElementById('btn-close-add-listing');
+  if (btnCloseAdd) btnCloseAdd.addEventListener('click', closeAddListingModal);
+  const btnSubmitAdd = document.getElementById('btn-submit-add-listing');
+  if (btnSubmitAdd) btnSubmitAdd.addEventListener('click', () => {
+    hideError('add-listing-error');
+    const result = createListingFromModal();
+    if (!result.ok) {
+      showError('add-listing-error', result.error);
+      return;
+    }
+    closeAddListingModal();
+    renderListings();
+    showToast('조사가 추가되었습니다.');
+  });
+  const addModal = document.getElementById('add-listing-modal');
+  if (addModal) addModal.addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeAddListingModal();
+  });
+
   // Escape key
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
       closePayoutModal();
       closeProfilePanel();
+      closeAddListingModal();
     }
   });
 }
