@@ -144,6 +144,61 @@ function setStore(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
 }
 
+// ─── Mixpanel: 설문 참여 클릭 로깅 (SDK 실패 시 Track API 폴백) ───
+var MIXPANEL_TOKEN = typeof window !== 'undefined' && window.MIXPANEL_TOKEN ? window.MIXPANEL_TOKEN : '1a30b5a4b298ee5477f21dc2a26e2307';
+
+function getDistinctId() {
+  if (typeof state !== 'undefined' && state.currentUser && state.currentUser.name) {
+    var name = String(state.currentUser.name).trim();
+    if (name) return name;
+  }
+  try {
+    var key = 'sp_mixpanel_distinct_id';
+    var id = localStorage.getItem(key);
+    if (!id) {
+      id = 'anon_' + Math.random().toString(36).slice(2) + '_' + Date.now();
+      localStorage.setItem(key, id);
+    }
+    return id;
+  } catch (e) {
+    return 'anon_' + Date.now();
+  }
+}
+
+function trackSurveyClick(payload) {
+  var eventName = '클릭 - ' + (payload.title || '제목 없음');
+  var props = {
+    title: payload.title,
+    listing_id: payload.listing_id,
+    category: payload.category || '',
+    source: payload.source || 'card',
+  };
+  var distinctId = getDistinctId();
+  if (typeof window.mixpanel !== 'undefined' && window.mixpanel.track) {
+    try {
+      window.mixpanel.identify(distinctId);
+      window.mixpanel.track(eventName, props);
+    } catch (e) {}
+  }
+  try {
+    var event = {
+      event: eventName,
+      properties: {
+        token: MIXPANEL_TOKEN,
+        distinct_id: distinctId,
+        time: Math.floor(Date.now() / 1000),
+      },
+    };
+    for (var k in props) event.properties[k] = props[k];
+    var data = btoa(unescape(encodeURIComponent(JSON.stringify([event]))));
+    fetch('https://api.mixpanel.com/track', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'data=' + encodeURIComponent(data),
+    }).catch(function () {});
+  } catch (e) {}
+}
+
 // ─── Data Initialization ───
 function initData() {
   const stored = getStore(KEYS.listings);
@@ -257,6 +312,9 @@ function saveProfile(name, birthdate, gender, job) {
   setStore(KEYS.users, users);
   Object.assign(state.currentUser, { name, birthdate, gender, job });
   document.getElementById('header-user-name').textContent = name;
+  if (window.mixpanel && window.mixpanel.identify && name) {
+    window.mixpanel.identify(String(name).trim());
+  }
 }
 
 function login(email, password) {
@@ -266,6 +324,9 @@ function login(email, password) {
 
   setStore(KEYS.session, email);
   state.currentUser = user;
+  if (window.mixpanel && window.mixpanel.identify && user.name) {
+    window.mixpanel.identify(String(user.name).trim());
+  }
   return { ok: true };
 }
 
@@ -281,6 +342,9 @@ function checkSession() {
     const user = findUser(email);
     if (user) {
       state.currentUser = user;
+      if (window.mixpanel && window.mixpanel.identify && user.name) {
+        window.mixpanel.identify(String(user.name).trim());
+      }
       return true;
     }
   }
@@ -519,10 +583,12 @@ function renderListings() {
     `;
   }).join('');
 
-  // 설문 참여 클릭 → 완료 처리
+  // 설문 참여 클릭 → 완료 처리 + Mixpanel 로깅
   grid.querySelectorAll('.card-btn-survey').forEach(btn => {
     btn.addEventListener('click', e => {
       const id = Number(btn.dataset.id);
+      const listing = getListingById(id);
+      if (listing) trackSurveyClick({ title: listing.title, listing_id: listing.id, category: listing.category, source: 'card' });
       markCompleted(id);
       renderListings();
       showToast('설문 완료로 기록되었습니다!');
@@ -609,6 +675,12 @@ function renderDetail(listingId) {
       markCompleted(listingId);
       renderDetail(listingId);
       showToast('설문 완료가 기록되었습니다!');
+    });
+  }
+  const surveyLinkEl = container.querySelector('.btn-survey');
+  if (surveyLinkEl) {
+    surveyLinkEl.addEventListener('click', () => {
+      trackSurveyClick({ title: listing.title, listing_id: listing.id, category: listing.category, source: 'detail' });
     });
   }
 }
