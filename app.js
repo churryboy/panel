@@ -17,8 +17,157 @@ const EMAIL_CONFIG = {
 // 관리자 이메일 — 이 계정으로 로그인 시 "유저 조회" 탭이 표시됩니다.
 const ADMIN_EMAIL = 'chris@proby.io';
 
+// ─── Supabase Configuration (public values) ───
+const SUPABASE_URL = 'https://ajfavivtgiawmfgxytxg.supabase.co';
+const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_pBVR1hpoGX6ZbBw0JzaVJw_GPU7Uhbt';
+let supabaseClient = null;
+const SUPABASE_REST_BASE = `${SUPABASE_URL}/rest/v1`;
+
 function isAdmin() {
   return state.currentUser && state.currentUser.email === ADMIN_EMAIL;
+}
+
+function getSupabaseClient() {
+  if (supabaseClient) return supabaseClient;
+  if (!window.supabase || !window.supabase.createClient) return null;
+  supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+  return supabaseClient;
+}
+
+function getSupabaseHeaders() {
+  return {
+    apikey: SUPABASE_PUBLISHABLE_KEY,
+    Authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
+    'Content-Type': 'application/json',
+  };
+}
+
+function userToRow(user) {
+  return {
+    email: user.email,
+    name: user.name || '',
+    password: user.password || '',
+    phone: user.phone || '',
+    created_at: user.createdAt || new Date().toISOString(),
+    bank_name: user.bankName || '',
+    bank_account: user.bankAccount || '',
+    birthdate: user.birthdate || '',
+    gender: user.gender || '',
+    job: user.job || '',
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function rowToUser(row) {
+  return {
+    email: row.email,
+    name: row.name || '',
+    password: row.password || '',
+    phone: row.phone || '',
+    createdAt: row.created_at || new Date().toISOString(),
+    bankName: row.bank_name || '',
+    bankAccount: row.bank_account || '',
+    birthdate: row.birthdate || '',
+    gender: row.gender || '',
+    job: row.job || '',
+  };
+}
+
+async function syncUsersFromSupabase() {
+  try {
+    const client = getSupabaseClient();
+    if (client) {
+      const { data, error } = await client
+        .from('panel_users')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (!error) {
+        setStore(KEYS.users, (data || []).map(rowToUser));
+        return true;
+      }
+      console.warn('[supabase] users sync sdk failed:', error.message);
+    }
+
+    // SDK 로드 실패/차단 대비 REST 폴백
+    const res = await fetch(`${SUPABASE_REST_BASE}/panel_users?select=*&order=created_at.desc`, {
+      method: 'GET',
+      headers: getSupabaseHeaders(),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      console.warn('[supabase] users sync rest failed:', res.status, text);
+      return false;
+    }
+    const data = await res.json();
+    setStore(KEYS.users, (data || []).map(rowToUser));
+    return true;
+  } catch (err) {
+    console.warn('[supabase] users sync failed:', err?.message || err);
+    return false;
+  }
+}
+
+async function upsertUserToSupabase(user) {
+  if (!user?.email) return false;
+  const row = userToRow(user);
+  try {
+    const client = getSupabaseClient();
+    if (client) {
+      const { error } = await client
+        .from('panel_users')
+        .upsert(row, { onConflict: 'email' });
+      if (!error) return true;
+      console.warn('[supabase] users upsert sdk failed:', error.message);
+    }
+
+    // SDK 로드 실패/차단 대비 REST 폴백
+    const res = await fetch(`${SUPABASE_REST_BASE}/panel_users`, {
+      method: 'POST',
+      headers: {
+        ...getSupabaseHeaders(),
+        Prefer: 'resolution=merge-duplicates,return=minimal',
+      },
+      body: JSON.stringify([row]),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      console.warn('[supabase] users upsert rest failed:', res.status, text);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('[supabase] users upsert failed:', err?.message || err);
+    return false;
+  }
+}
+
+async function deleteUserFromSupabase(email) {
+  if (!email) return false;
+  try {
+    const client = getSupabaseClient();
+    if (client) {
+      const { error } = await client
+        .from('panel_users')
+        .delete()
+        .eq('email', email);
+      if (!error) return true;
+      console.warn('[supabase] users delete sdk failed:', error.message);
+    }
+
+    const res = await fetch(`${SUPABASE_REST_BASE}/panel_users?email=eq.${encodeURIComponent(email)}`, {
+      method: 'DELETE',
+      headers: getSupabaseHeaders(),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      console.warn('[supabase] users delete rest failed:', res.status, text);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('[supabase] users delete failed:', err?.message || err);
+    return false;
+  }
 }
 
 // ─── Sample Data ───
@@ -311,7 +460,8 @@ function verifyCode(phone, inputCode) {
   return pendingVerification.code === (inputCode || '').trim();
 }
 
-function register(name, email, password, phone, verificationCode) {
+async function register(name, email, password, phone, verificationCode) {
+  await syncUsersFromSupabase();
   if (findUser(email)) return { ok: false, error: '이미 가입된 이메일입니다.' };
   if (findUserByPhone(phone)) return { ok: false, error: '이미 가입된 전화번호입니다.' };
   if (password.length < 6) return { ok: false, error: '비밀번호는 6자 이상이어야 합니다.' };
@@ -319,7 +469,7 @@ function register(name, email, password, phone, verificationCode) {
 
   const normalizedPhone = normalizePhone(phone);
   const users = getUsers();
-  users.push({
+  const newUser = {
     name,
     email,
     password,
@@ -327,18 +477,26 @@ function register(name, email, password, phone, verificationCode) {
     createdAt: new Date().toISOString(),
     bankName: '',
     bankAccount: '',
-  });
+    birthdate: '',
+    gender: '',
+    job: '',
+  };
+  users.push(newUser);
   setStore(KEYS.users, users);
+  await upsertUserToSupabase(newUser);
+  await syncUsersFromSupabase();
   pendingVerification = { phone: '', code: '', expiresAt: 0 };
   return { ok: true };
 }
 
-function deleteUser(email) {
+async function deleteUser(email) {
   const users = getUsers().filter(u => u.email !== email);
   setStore(KEYS.users, users);
+  await deleteUserFromSupabase(email);
+  await syncUsersFromSupabase();
 }
 
-function saveBankInfo(bankName, bankAccount) {
+async function saveBankInfo(bankName, bankAccount) {
   if (!state.currentUser) return;
   const users = getUsers();
   const idx = users.findIndex(u => u.email === state.currentUser.email);
@@ -348,9 +506,10 @@ function saveBankInfo(bankName, bankAccount) {
   setStore(KEYS.users, users);
   state.currentUser.bankName = bankName;
   state.currentUser.bankAccount = bankAccount;
+  await upsertUserToSupabase(users[idx]);
 }
 
-function saveProfile(name, birthdate, gender, job) {
+async function saveProfile(name, birthdate, gender, job) {
   if (!state.currentUser) return;
   const users = getUsers();
   const idx = users.findIndex(u => u.email === state.currentUser.email);
@@ -365,9 +524,11 @@ function saveProfile(name, birthdate, gender, job) {
   if (window.mixpanel && window.mixpanel.identify && name) {
     window.mixpanel.identify(String(name).trim());
   }
+  await upsertUserToSupabase(users[idx]);
 }
 
-function login(email, password) {
+async function login(email, password) {
+  await syncUsersFromSupabase();
   const user = findUser(email);
   if (!user) return { ok: false, error: '등록되지 않은 이메일입니다.' };
   if (user.password !== password) return { ok: false, error: '비밀번호가 일치하지 않습니다.' };
@@ -880,11 +1041,11 @@ function renderSettlement() {
     document.getElementById('btn-cancel-bank').addEventListener('click', () => {
       document.getElementById('bank-form').classList.add('hidden');
     });
-    document.getElementById('btn-save-bank').addEventListener('click', () => {
+    document.getElementById('btn-save-bank').addEventListener('click', async () => {
       const bn = document.getElementById('bank-name-input').value.trim();
       const ba = document.getElementById('bank-account-input').value.trim();
       if (!bn || !ba) { showToast('은행명과 계좌번호를 모두 입력하세요.'); return; }
-      saveBankInfo(bn, ba);
+      await saveBankInfo(bn, ba);
       showToast('계좌정보가 저장되었습니다!');
       renderSettlement();
     });
@@ -947,10 +1108,11 @@ function renderSettlement() {
 }
 
 // ─── Render: Users (Admin) ───
-function renderUsers() {
+async function renderUsers() {
   const container = document.getElementById('users-list');
   const empty = document.getElementById('users-empty');
   if (!container) return;
+  await syncUsersFromSupabase();
 
   const users = getUsers();
   const completed = getCompleted();
@@ -1099,11 +1261,11 @@ function renderUsers() {
       });
     });
     container.querySelectorAll('.btn-delete-user').forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         const email = btn.dataset.email;
         if (!confirm(`"${email}" 유저를 삭제하시겠습니까?`)) return;
-        deleteUser(email);
-        renderUsers();
+        await deleteUser(email);
+        await renderUsers();
         showToast('유저가 삭제되었습니다.');
       });
     });
@@ -1251,12 +1413,12 @@ function closeProfilePanel() {
   document.getElementById('profile-backdrop')?.classList.add('hidden');
 }
 
-function withdrawAccount() {
+async function withdrawAccount() {
   if (!state.currentUser) return;
   if (!confirm('정말 탈퇴하시겠습니까? 계정과 관련 데이터가 삭제되며 복구할 수 없습니다.')) return;
   const email = state.currentUser.email;
   closeProfilePanel();
-  deleteUser(email);
+  await deleteUser(email);
   logout();
   showToast('탈퇴되었습니다.');
 }
@@ -1333,7 +1495,7 @@ async function submitPayout() {
 // ─── Event Listeners ───
 function bindEvents() {
   // Login
-  document.getElementById('btn-login').addEventListener('click', () => {
+  document.getElementById('btn-login').addEventListener('click', async () => {
     const email = document.getElementById('login-email').value.trim();
     const password = document.getElementById('login-password').value;
 
@@ -1342,7 +1504,7 @@ function bindEvents() {
       showError('login-error', '이메일과 비밀번호를 입력하세요.');
       return;
     }
-    const result = login(email, password);
+    const result = await login(email, password);
     if (result.ok) {
       showView('app');
     } else {
@@ -1377,7 +1539,7 @@ function bindEvents() {
   });
 
   // Register
-  document.getElementById('btn-register').addEventListener('click', () => {
+  document.getElementById('btn-register').addEventListener('click', async () => {
     const name = document.getElementById('reg-name').value.trim();
     const phone = document.getElementById('reg-phone').value.trim();
     const verificationCode = document.getElementById('reg-verify-code').value.trim();
@@ -1394,9 +1556,9 @@ function bindEvents() {
       showError('register-error', '비밀번호가 일치하지 않습니다.');
       return;
     }
-    const result = register(name, email, password, phone, verificationCode);
+    const result = await register(name, email, password, phone, verificationCode);
     if (result.ok) {
-      login(email, password);
+      await login(email, password);
       showView('app');
       showToast('회원가입이 완료되었습니다!');
     } else {
@@ -1432,18 +1594,18 @@ function bindEvents() {
   document.getElementById('btn-close-profile').addEventListener('click', closeProfilePanel);
   document.getElementById('profile-backdrop').addEventListener('click', closeProfilePanel);
 
-  document.getElementById('btn-save-profile').addEventListener('click', () => {
+  document.getElementById('btn-save-profile').addEventListener('click', async () => {
     const name      = document.getElementById('profile-name').value.trim();
     const birthdate = document.getElementById('profile-birthdate').value.trim();
     const gender    = document.getElementById('profile-gender').value;
     const job       = document.getElementById('profile-job').value.trim();
     if (!name) { showToast('이름을 입력하세요.'); return; }
-    saveProfile(name, birthdate, gender, job);
+    await saveProfile(name, birthdate, gender, job);
     showToast('프로필이 저장되었습니다!');
     closeProfilePanel();
   });
 
-  document.getElementById('btn-withdraw').addEventListener('click', withdrawAccount);
+  document.getElementById('btn-withdraw').addEventListener('click', () => { withdrawAccount(); });
 
   // Logout
   document.getElementById('btn-logout').addEventListener('click', logout);
@@ -1500,8 +1662,9 @@ function bindEvents() {
 }
 
 // ─── Init ───
-function init() {
+async function init() {
   initData();
+  await syncUsersFromSupabase();
   bindEvents();
 
   if (checkSession()) {
@@ -1511,4 +1674,8 @@ function init() {
   }
 }
 
-document.addEventListener('DOMContentLoaded', init);
+document.addEventListener('DOMContentLoaded', () => {
+  init().catch(err => {
+    console.error('init failed:', err);
+  });
+});
