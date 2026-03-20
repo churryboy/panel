@@ -926,15 +926,23 @@ function buildListingCard(listing) {
            설문 참여
          </a>`
       : `<span class="card-btn-closed">마감됨</span>`;
+  const editBtn = isAdmin()
+    ? `<button class="btn-edit-listing" data-id="${listing.id}" title="수정">
+         <span class="material-symbols-outlined text-base">edit</span>
+       </button>`
+    : '';
   return `
     <div class="listing-card${completed ? ' listing-card--done' : ''}">
       <div class="listing-card-header">
         <div class="flex flex-wrap gap-1.5">
           <span class="badge badge-category">${listing.category}</span>
         </div>
-        <span class="badge ${!isActive ? 'badge-closed' : (completed || listing.deadline) ? 'badge-done' : 'badge-active'}">
-          ${!isActive ? '마감' : completed ? (listing.deadline ? `${formatDate(listing.deadline)} 마감` : '검토 중') : (listing.deadline ? `${formatDate(listing.deadline)} 마감` : '모집중')}
-        </span>
+        <div class="flex items-center gap-2">
+          <span class="badge ${!isActive ? 'badge-closed' : (completed || listing.deadline) ? 'badge-done' : 'badge-active'}">
+            ${!isActive ? '마감' : completed ? (listing.deadline ? `${formatDate(listing.deadline)} 마감` : '검토 중') : (listing.deadline ? `${formatDate(listing.deadline)} 마감` : '모집중')}
+          </span>
+          ${editBtn}
+        </div>
       </div>
       <div class="listing-card-body">
         <h3 class="text-sm font-bold leading-snug mb-1.5">${listing.title}</h3>
@@ -1450,7 +1458,7 @@ function hideError(elementId) {
   el.classList.add('hidden');
 }
 
-// ─── Admin: Add listing ───
+// ─── Admin: Add / Edit listing ───
 function openAddListingModal() {
   if (!isAdmin()) return;
   hideError('add-listing-error');
@@ -1462,6 +1470,7 @@ function openAddListingModal() {
   const mm = String(today.getMonth() + 1).padStart(2, '0');
   const dd = String(today.getDate()).padStart(2, '0');
 
+  document.getElementById('listing-edit-id').value = '';
   document.getElementById('listing-title').value = '';
   document.getElementById('listing-category').value = '';
   document.getElementById('listing-estimatedTime').value = '';
@@ -1470,6 +1479,30 @@ function openAddListingModal() {
   document.getElementById('listing-deadline').value = `${yyyy}-${mm}-${dd}`;
   document.getElementById('listing-maxParticipants').value = '';
 
+  modal.querySelector('h2').textContent = '조사 추가';
+  document.getElementById('btn-submit-add-listing').textContent = '생성하기';
+  modal.classList.remove('hidden');
+}
+
+function openEditListingModal(id) {
+  if (!isAdmin()) return;
+  const listing = getListingById(Number(id));
+  if (!listing) return;
+  hideError('add-listing-error');
+  const modal = document.getElementById('add-listing-modal');
+  if (!modal) return;
+
+  document.getElementById('listing-edit-id').value = listing.id;
+  document.getElementById('listing-title').value = listing.title || '';
+  document.getElementById('listing-category').value = listing.category || '';
+  document.getElementById('listing-estimatedTime').value = listing.estimatedTime || '';
+  document.getElementById('listing-description').value = listing.description || '';
+  document.getElementById('listing-surveyLink').value = listing.surveyLink || '';
+  document.getElementById('listing-deadline').value = listing.deadline || '';
+  document.getElementById('listing-maxParticipants').value = listing.maxParticipants || '';
+
+  modal.querySelector('h2').textContent = '조사 수정';
+  document.getElementById('btn-submit-add-listing').textContent = '저장하기';
   modal.classList.remove('hidden');
 }
 
@@ -1518,6 +1551,38 @@ function createListingFromModal() {
 
   setStore(KEYS.listings, [listing, ...current]);
   trackListingCreated(listing);
+  return { ok: true, listing };
+}
+
+function updateListingFromModal() {
+  if (!isAdmin()) return { ok: false, error: '권한이 없습니다.' };
+
+  const id = Number(document.getElementById('listing-edit-id')?.value);
+  if (!id) return { ok: false, error: '수정할 조사를 찾을 수 없습니다.' };
+
+  const title = document.getElementById('listing-title')?.value.trim();
+  const category = document.getElementById('listing-category')?.value.trim();
+  const estimatedTime = document.getElementById('listing-estimatedTime')?.value.trim();
+  const description = document.getElementById('listing-description')?.value.trim();
+  const surveyLink = document.getElementById('listing-surveyLink')?.value.trim();
+  const deadline = document.getElementById('listing-deadline')?.value;
+  const maxParticipants = Number(document.getElementById('listing-maxParticipants')?.value);
+
+  if (!title) return { ok: false, error: '조사명을 입력하세요.' };
+  if (!category) return { ok: false, error: '카테고리를 입력하세요.' };
+  if (!estimatedTime) return { ok: false, error: '예상 소요시간을 입력하세요.' };
+  if (!description) return { ok: false, error: '설명을 입력하세요.' };
+  if (!surveyLink) return { ok: false, error: '설문 링크를 입력하세요.' };
+  if (!deadline) return { ok: false, error: '마감일을 입력하세요.' };
+  if (!Number.isFinite(maxParticipants) || maxParticipants <= 0) return { ok: false, error: '최종 모수(명)를 올바르게 입력하세요.' };
+
+  const current = getStore(KEYS.listings, SAMPLE_LISTINGS) || [];
+  const updated = current.map(l => l.id === id
+    ? { ...l, title, category, estimatedTime, description, surveyLink, deadline, maxParticipants }
+    : l
+  );
+  setStore(KEYS.listings, updated);
+  const listing = updated.find(l => l.id === id);
   return { ok: true, listing };
 }
 
@@ -1759,15 +1824,22 @@ function bindEvents() {
   const btnSubmitAdd = document.getElementById('btn-submit-add-listing');
   if (btnSubmitAdd) btnSubmitAdd.addEventListener('click', async () => {
     hideError('add-listing-error');
-    const result = createListingFromModal();
+    const editId = document.getElementById('listing-edit-id')?.value;
+    const result = editId ? updateListingFromModal() : createListingFromModal();
     if (!result.ok) {
       showError('add-listing-error', result.error);
       return;
     }
     closeAddListingModal();
     renderListings();
-    showToast('조사가 추가되었습니다.');
+    showToast(editId ? '조사가 수정되었습니다.' : '조사가 추가되었습니다.');
     await upsertListingToSupabase(result.listing);
+  });
+
+  // 카드 수정 버튼 (이벤트 델리게이션)
+  document.addEventListener('click', e => {
+    const btn = e.target.closest('.btn-edit-listing');
+    if (btn) openEditListingModal(btn.dataset.id);
   });
   const addModal = document.getElementById('add-listing-modal');
   if (addModal) addModal.addEventListener('click', e => {

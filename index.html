@@ -1761,6 +1761,24 @@ body {
   justify-content: center;
 }
 
+.btn-edit-listing {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 0.375rem;
+  color: rgba(255,255,255,0.4);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+.btn-edit-listing:hover {
+  color: rgba(255,255,255,0.85);
+  background: rgba(255,255,255,0.08);
+}
+
 .btn-ghost:hover {
   background: rgba(65, 104, 175, 0.12);
   border-color: rgba(65, 104, 175, 0.55);
@@ -2820,6 +2838,7 @@ select.sf-input option {
         </div>
       </div>
 
+      <input type="hidden" id="listing-edit-id">
       <div id="add-listing-error" class="text-red-400 text-xs mb-4 hidden"></div>
 
       <button id="btn-submit-add-listing" class="btn-primary w-full py-3.5 text-sm font-bold">
