@@ -51,3 +51,25 @@ CDN 대신 빌드된 CSS를 쓰면 콘솔 경고가 사라지고 프로덕션에
 - **최초 1회·CSS 수정 후:**  
   `npm install` → `npm run build:css`  
 - 생성된 파일: `dist/tailwind.css` (이 파일을 그대로 배포하면 됩니다)
+
+---
+
+## Mixpanel 유입 경로(이메일·Gmail 등)
+
+브라우저는 **개인정보 보호** 때문에 `document.referrer`(리퍼러)를 **아예 비우는 경우**가 많습니다.  
+특히 **Gmail·아웃룩·메일 앱**에서 링크를 눌렀을 때는 리퍼러가 없어서 Mixpanel에 **`entry_source: direct`**, **`referrer` 빈 값**으로 보이는 것이 **정상적인 동작**일 수 있습니다.
+
+**정확히 채널을 나누려면** 링크에 UTM을 붙이는 방식이 가장 확실합니다.
+
+예시:
+
+```text
+https://panel-sand-one.vercel.app/?view=app&utm_source=gmail&utm_medium=email&utm_campaign=panel_launch
+```
+
+- `utm_source`: gmail, newsletter, kakao 등
+- `utm_medium`: email, social 등
+- `utm_campaign`: 캠페인명
+
+앱은 이미 위 파라미터를 읽어 모든 이벤트에 붙입니다.  
+리퍼러가 없을 때는 **`referrer_present: false`** 로 구분할 수 있습니다.

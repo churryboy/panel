@@ -450,6 +450,14 @@ var LANDING_TRACKED_KEY = 'sp_landing_tracked_v1';
 function inferSourceFromReferrer(referrer) {
   if (!referrer) return 'direct';
   var r = String(referrer).toLowerCase();
+  try {
+    var u = new URL(referrer);
+    var host = u.hostname.replace(/^www\./, '');
+    // Gmail 웹앱에서 직접 넘어온 경우(드묾)
+    if (host === 'mail.google.com' || host === 'inbox.google.com') return 'gmail';
+    // Gmail/검색 등에서 흔한 Google 래퍼 링크 (이메일·광고·검색 구분 불가)
+    if (host === 'google.com' && u.pathname.indexOf('/url') === 0) return 'google_redirect';
+  } catch (e) {}
   if (r.includes('kakao')) return 'kakao';
   if (r.includes('linkedin')) return 'linkedin';
   if (r.includes('google')) return 'google';
@@ -473,6 +481,8 @@ function getTrafficProps() {
     var utmContent = url.searchParams.get('utm_content') || '';
     var utmTerm = url.searchParams.get('utm_term') || '';
     var referrer = document.referrer || '';
+    // Gmail·메일앱·일부 브라우저는 Referer를 보내지 않음 → 클라이언트만으로는 'direct'로 보일 수 있음
+    var referrerPresent = Boolean(referrer && referrer.length > 0);
     var currentSource = utmSource || inferSourceFromReferrer(referrer);
 
     var firstTouch = getStore(ENTRY_ATTR_KEY, null);
@@ -489,6 +499,7 @@ function getTrafficProps() {
     return {
       entry_source: currentSource || 'direct',
       referrer: referrer || '',
+      referrer_present: referrerPresent,
       landing_path: url.pathname + url.search,
       utm_source: utmSource,
       utm_medium: utmMedium,
