@@ -666,7 +666,7 @@ async function login(email, password) {
 function logout() {
   localStorage.removeItem(KEYS.session);
   state.currentUser = null;
-  showView('login');
+  showView('app');
 }
 
 function checkSession() {
@@ -866,6 +866,21 @@ async function sendPayoutEmail(payout) {
 }
 
 // ─── View Management ───
+function updateHeaderAuth() {
+  const loggedIn = !!state.currentUser;
+  document.getElementById('btn-header-login').classList.toggle('hidden', loggedIn);
+  document.getElementById('btn-profile').classList.toggle('hidden', !loggedIn);
+  document.getElementById('header-divider').classList.toggle('hidden', !loggedIn);
+  document.getElementById('btn-logout').classList.toggle('hidden', !loggedIn);
+  if (loggedIn) {
+    document.getElementById('header-user-name').textContent = state.currentUser.name || '';
+  }
+  const tabUsers = document.getElementById('tab-users');
+  if (tabUsers) tabUsers.classList.toggle('hidden', !isAdmin());
+  const tabSettlement = document.querySelector('[data-tab="settlement"]');
+  if (tabSettlement) tabSettlement.classList.toggle('hidden', !loggedIn);
+}
+
 function showView(name) {
   const loginView = document.getElementById('login-view');
   const appView = document.getElementById('app-view');
@@ -876,9 +891,7 @@ function showView(name) {
   } else {
     loginView.classList.add('hidden');
     appView.classList.remove('hidden');
-    document.getElementById('header-user-name').textContent = state.currentUser?.name || '';
-    const tabUsers = document.getElementById('tab-users');
-    if (tabUsers) tabUsers.classList.toggle('hidden', !isAdmin());
+    updateHeaderAuth();
     switchTab(state.currentTab);
   }
 }
@@ -1012,7 +1025,12 @@ function renderListings() {
 
   const container = sectionsEl || document.body;
   container.querySelectorAll('.card-btn-survey').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', e => {
+      if (!state.currentUser) {
+        e.preventDefault();
+        showView('login');
+        return;
+      }
       const id = Number(btn.dataset.id);
       const listing = getListingById(id);
       if (listing) trackSurveyClick({ title: listing.title, listing_id: listing.id, category: listing.category, source: 'card' });
@@ -1796,6 +1814,8 @@ function bindEvents() {
 
   // Logout
   document.getElementById('btn-logout').addEventListener('click', logout);
+  document.getElementById('btn-header-login').addEventListener('click', () => showView('login'));
+  document.getElementById('btn-back-to-listings').addEventListener('click', () => showView('app'));
 
   // Tabs
   document.querySelectorAll('.tab').forEach(tab => {
@@ -1863,11 +1883,8 @@ async function init() {
   await syncListingsFromSupabase();
   bindEvents();
 
-  if (checkSession()) {
-    showView('app');
-  } else {
-    showView('login');
-  }
+  checkSession();
+  showView('app');
 }
 
 document.addEventListener('DOMContentLoaded', () => {
