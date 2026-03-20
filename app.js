@@ -557,6 +557,20 @@ function sendMixpanelEvent(eventName, props) {
   } catch (e) {}
 }
 
+function safeMixpanelIdentify(nameOrId) {
+  if (!nameOrId) return;
+  if (
+    typeof window.mixpanel !== 'undefined' &&
+    window.mixpanel &&
+    typeof window.mixpanel.identify === 'function' &&
+    window.__mixpanelReady === true
+  ) {
+    try {
+      window.mixpanel.identify(String(nameOrId).trim());
+    } catch (e) {}
+  }
+}
+
 function trackLandingViewedOnce() {
   try {
     if (sessionStorage.getItem(LANDING_TRACKED_KEY) === '1') return;
@@ -750,9 +764,7 @@ async function saveProfile(name, birthdate, gender, job) {
   Object.assign(state.currentUser, { name, birthdate, gender, job });
   setStore(KEYS.sessionUser, { ...state.currentUser });
   document.getElementById('header-user-name').textContent = name;
-  if (window.mixpanel && window.mixpanel.identify && name) {
-    window.mixpanel.identify(String(name).trim());
-  }
+  safeMixpanelIdentify(name);
   await updateUserProfile(state.currentUser.email, { name, birthdate, gender, job });
 }
 
@@ -769,9 +781,7 @@ async function login(email, password) {
     setStore(KEYS.session, data.token);
     setStore(KEYS.sessionUser, data.user);
     state.currentUser = data.user;
-    if (window.mixpanel && window.mixpanel.identify && data.user.name) {
-      window.mixpanel.identify(String(data.user.name).trim());
-    }
+    safeMixpanelIdentify(data.user && data.user.name);
     return { ok: true };
   } catch (e) {
     return { ok: false, error: '네트워크 오류가 발생했습니다.' };
@@ -800,9 +810,7 @@ function checkSession() {
       return false;
     }
     state.currentUser = user;
-    if (window.mixpanel && window.mixpanel.identify && user.name) {
-      window.mixpanel.identify(String(user.name).trim());
-    }
+    safeMixpanelIdentify(user && user.name);
     return true;
   } catch {
     localStorage.removeItem(KEYS.session);
