@@ -347,7 +347,11 @@ function getDistinctId() {
 
 function sendMixpanelEvent(eventName, props) {
   var distinctId = getDistinctId();
-  if (typeof window.mixpanel !== 'undefined' && window.mixpanel.track) {
+  if (
+    typeof window.mixpanel !== 'undefined' &&
+    window.mixpanel.track &&
+    window.__mixpanelReady === true
+  ) {
     try {
       window.mixpanel.identify(distinctId);
       window.mixpanel.track(eventName, props);

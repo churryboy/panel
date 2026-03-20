@@ -2838,7 +2838,15 @@ select.sf-input option {
 
   <script type="text/javascript">
     window.MIXPANEL_TOKEN = "1a30b5a4b298ee5477f21dc2a26e2307";
-    if (window.mixpanel) { window.mixpanel.init(window.MIXPANEL_TOKEN); }
+    window.__mixpanelReady = false;
+    if (window.mixpanel) {
+      try {
+        window.mixpanel.init(window.MIXPANEL_TOKEN);
+        window.__mixpanelReady = true;
+      } catch (e) {
+        window.__mixpanelReady = false;
+      }
+    }
   </script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="app.js"></script>
