@@ -2403,6 +2403,26 @@ select.sf-input option {
   <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
   <!-- Mixpanel: 동기 로드로 클릭 시점에 SDK 준비 보장 -->
   <script src="https://cdn.mxpnl.com/libs/mixpanel-2-latest.min.js"></script>
+  <!-- 초기 페인트: 공고 뷰(?view=app) 또는 저장된 세션 시 로그인 화면 플래시 방지 (app.js 이전) -->
+  <script>
+  (function () {
+    try {
+      var q = new URLSearchParams(window.location.search);
+      if (q.get('view') === 'app') {
+        document.documentElement.setAttribute('data-boot-app', '1');
+        return;
+      }
+      var s = localStorage.getItem('sp_session');
+      if (s != null && s !== '""' && s !== 'null') {
+        document.documentElement.setAttribute('data-boot-app', '1');
+      }
+    } catch (e) {}
+  })();
+  </script>
+  <style>
+  html[data-boot-app="1"] #login-view { display: none !important; }
+  html[data-boot-app="1"] #app-view.view { display: block !important; }
+  </style>
 </head>
 <body class="font-display text-white antialiased bg-bg min-h-screen overflow-x-hidden">
 

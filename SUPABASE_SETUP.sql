@@ -1,125 +1,162 @@
+-- ═══════════════════════════════════════════════════════
+-- Proby 설문 패널 — Supabase 스키마 & RLS 설정
+-- 실행 순서: Supabase SQL Editor에서 전체 복사 후 1회 실행
+-- (멱등 설계: 반복 실행해도 안전)
+-- ═══════════════════════════════════════════════════════
+
+-- ─── 확장 ───
+create extension if not exists "pgcrypto";
+
+-- ═══════════════════════════════════════════════════════
+-- 1. panel_listings
+-- ═══════════════════════════════════════════════════════
 create table if not exists public.panel_listings (
-  id integer primary key,
-  title text not null default '',
-  description text not null default '',
-  reward integer not null default 0,
-  survey_link text not null default '',
-  deadline text not null default '',
-  status text not null default 'active',
-  category text not null default '',
-  estimated_time text not null default '',
-  max_participants integer not null default 0,
-  current_participants integer not null default 0,
-  created_at timestamptz not null default now()
+  id               integer     primary key,
+  title            text        not null default '',
+  description      text        not null default '',
+  reward           integer     not null default 0 check (reward >= 0),
+  survey_link      text        not null default '',
+  deadline         text        not null default '',
+  status           text        not null default 'active'
+                               check (status in ('active', 'closed', 'draft')),
+  category         text        not null default '',
+  estimated_time   text        not null default '',
+  max_participants integer     not null default 0 check (max_participants >= 0),
+  current_participants integer not null default 0 check (current_participants >= 0),
+  created_at       timestamptz not null default now()
 );
+
+-- 인덱스
+create index if not exists idx_listings_status on public.panel_listings(status);
 
 alter table public.panel_listings enable row level security;
 
-drop policy if exists "public read panel_listings" on public.panel_listings;
-create policy "public read panel_listings"
-on public.panel_listings for select to anon, authenticated using (true);
+-- 읽기: 모든 사람(비로그인 포함) 허용
+drop policy if exists "listings: public read" on public.panel_listings;
+create policy "listings: public read"
+  on public.panel_listings for select
+  to anon, authenticated
+  using (true);
 
-drop policy if exists "public insert panel_listings" on public.panel_listings;
-create policy "public insert panel_listings"
-on public.panel_listings for insert to anon, authenticated with check (true);
+-- 쓰기: service_role 전용(서버 API에서만 사용)
+drop policy if exists "listings: service write" on public.panel_listings;
+create policy "listings: service write"
+  on public.panel_listings for all
+  to service_role
+  using (true)
+  with check (true);
 
-drop policy if exists "public update panel_listings" on public.panel_listings;
-create policy "public update panel_listings"
-on public.panel_listings for update to anon, authenticated using (true) with check (true);
-
-drop policy if exists "public delete panel_listings" on public.panel_listings;
-create policy "public delete panel_listings"
-on public.panel_listings for delete to anon, authenticated using (true);
-
+-- ═══════════════════════════════════════════════════════
+-- 2. panel_users
+-- ═══════════════════════════════════════════════════════
 create table if not exists public.panel_users (
-  email text primary key,
-  name text not null default '',
-  password text not null default '',
-  phone text not null default '',
-  phone_verified boolean not null default false,
-  email_notice_agreed boolean not null default false,
-  created_at timestamptz not null default now(),
-  bank_name text not null default '',
-  bank_account text not null default '',
-  birthdate text not null default '',
-  gender text not null default '',
-  job text not null default '',
-  updated_at timestamptz not null default now()
+  email               text        primary key,
+  name                text        not null default '',
+  password            text        not null default '',
+  phone               text        not null default '',
+  phone_verified      boolean     not null default false,
+  email_notice_agreed boolean     not null default false,
+  created_at          timestamptz not null default now(),
+  bank_name           text        not null default '',
+  bank_account        text        not null default '',
+  birthdate           text        not null default '',
+  gender              text        not null default '',
+  job                 text        not null default '',
+  updated_at          timestamptz not null default now()
 );
+
+-- D10: phone UNIQUE 제약 (이미 있으면 무시)
+do $$ begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'panel_users_phone_unique'
+  ) then
+    alter table public.panel_users
+      add constraint panel_users_phone_unique unique (phone);
+  end if;
+end $$;
+
+-- 인덱스
+create index if not exists idx_users_phone on public.panel_users(phone);
 
 alter table public.panel_users enable row level security;
 
-drop policy if exists "public read panel_users" on public.panel_users;
-create policy "public read panel_users"
-on public.panel_users
-for select
-to anon, authenticated
-using (true);
+-- 읽기: service_role 전용 (관리자·서버만 전체 조회 가능)
+drop policy if exists "users: service read" on public.panel_users;
+create policy "users: service read"
+  on public.panel_users for select
+  to service_role
+  using (true);
 
-drop policy if exists "public insert panel_users" on public.panel_users;
-create policy "public insert panel_users"
-on public.panel_users
-for insert
-to anon, authenticated
-with check (true);
+-- 쓰기(insert/update/delete): service_role 전용
+drop policy if exists "users: service write" on public.panel_users;
+create policy "users: service write"
+  on public.panel_users for all
+  to service_role
+  using (true)
+  with check (true);
 
-drop policy if exists "public update panel_users" on public.panel_users;
-create policy "public update panel_users"
-on public.panel_users
-for update
-to anon, authenticated
-using (true)
-with check (true);
-
-drop policy if exists "public delete panel_users" on public.panel_users;
-create policy "public delete panel_users"
-on public.panel_users
-for delete
-to anon, authenticated
-using (true);
-
-create table if not exists public.phone_verifications (
-  id bigint generated always as identity primary key,
-  phone text not null,
-  code_hash text not null,
-  status text not null default 'pending',
-  attempt_count integer not null default 0,
-  expires_at timestamptz not null,
-  verified_at timestamptz,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+-- ═══════════════════════════════════════════════════════
+-- 3. sessions — D9: 서버사이드 세션 revoke 지원
+-- ═══════════════════════════════════════════════════════
+create table if not exists public.sessions (
+  token_hash  text        primary key,
+  email       text        not null references public.panel_users(email) on delete cascade,
+  created_at  timestamptz not null default now(),
+  expires_at  timestamptz not null,
+  revoked     boolean     not null default false
 );
 
-create index if not exists idx_phone_verifications_phone_created_at
-  on public.phone_verifications(phone, created_at desc);
+create index if not exists idx_sessions_email     on public.sessions(email);
+create index if not exists idx_sessions_expires_at on public.sessions(expires_at);
+
+alter table public.sessions enable row level security;
+
+-- service_role만 접근
+drop policy if exists "sessions: service only" on public.sessions;
+create policy "sessions: service only"
+  on public.sessions for all
+  to service_role
+  using (true)
+  with check (true);
+
+-- ═══════════════════════════════════════════════════════
+-- 4. phone_verifications
+-- ═══════════════════════════════════════════════════════
+create table if not exists public.phone_verifications (
+  id            bigint generated always as identity primary key,
+  phone         text        not null,
+  code_hash     text        not null,
+  status        text        not null default 'pending'
+                            check (status in ('pending', 'verified', 'expired', 'failed')),
+  attempt_count integer     not null default 0 check (attempt_count >= 0),
+  expires_at    timestamptz not null,
+  verified_at   timestamptz,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+
+-- D10: 상태/만료 인덱스
+create index if not exists idx_pv_phone_status
+  on public.phone_verifications(phone, status, expires_at desc);
+create index if not exists idx_pv_expires_at
+  on public.phone_verifications(expires_at);
 
 alter table public.phone_verifications enable row level security;
 
-drop policy if exists "public read phone_verifications" on public.phone_verifications;
-create policy "public read phone_verifications"
-on public.phone_verifications
-for select
-to anon, authenticated
-using (true);
+-- service_role 전용
+drop policy if exists "pv: service only" on public.phone_verifications;
+create policy "pv: service only"
+  on public.phone_verifications for all
+  to service_role
+  using (true)
+  with check (true);
 
-drop policy if exists "public insert phone_verifications" on public.phone_verifications;
-create policy "public insert phone_verifications"
-on public.phone_verifications
-for insert
-to anon, authenticated
-with check (true);
-
-drop policy if exists "public update phone_verifications" on public.phone_verifications;
-create policy "public update phone_verifications"
-on public.phone_verifications
-for update
-to anon, authenticated
-using (true)
-with check (true);
-
-drop policy if exists "public delete phone_verifications" on public.phone_verifications;
-create policy "public delete phone_verifications"
-on public.phone_verifications
-for delete
-to anon, authenticated
-using (true);
+-- ═══════════════════════════════════════════════════════
+-- 5. 만료 세션/인증 자동 정리 (선택: pg_cron 있으면 활성화)
+-- ═══════════════════════════════════════════════════════
+-- select cron.schedule('cleanup-expired', '0 * * * *', $$
+--   delete from public.sessions where expires_at < now();
+--   delete from public.phone_verifications
+--     where expires_at < now() - interval '1 day';
+-- $$);

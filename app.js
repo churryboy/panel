@@ -973,6 +973,7 @@ function showView(name, options = {}) {
   const appView = document.getElementById('app-view');
 
   if (name === 'login') {
+    document.documentElement.removeAttribute('data-boot-app');
     loginView.classList.remove('hidden');
     appView.classList.add('hidden');
     showAuthForm(mode);
@@ -2037,10 +2038,7 @@ function bindEvents() {
 // ─── Init ───
 async function init() {
   initData();
-  await syncUsersFromSupabase();
-  await syncListingsFromSupabase();
-  bindEvents();
-
+  // 세션·라우트 반영은 네트워크(sync)보다 먼저 — 그렇지 않으면 HTML 기본값(로그인 뷰)이 잠깐 보임(FOUC)
   checkSession();
   const route = getRouteState();
   if (state.currentUser) {
@@ -2050,6 +2048,12 @@ async function init() {
     if (route.view === 'login') showView('login', { mode: route.mode, replace: true });
     else showView('app', { replace: true });
   }
+
+  bindEvents();
+  await syncUsersFromSupabase();
+  await syncListingsFromSupabase();
+  // 원격 데이터 반영 후 현재 탭만 다시 그리기
+  switchTab(state.currentTab);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
