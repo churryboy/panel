@@ -115,6 +115,20 @@ const SAMPLE_LISTINGS = [
     currentParticipants: 0,
   },
   {
+    id: 10,
+    title: '전기밥솥 브랜드 인지도 조사',
+    description: '전기밥솥 브랜드에 대한 인지도와 어떤 이유로 선호하는지 등을 파악하기 위해 기획된 조사입니다',
+    reward: 1000,
+    surveyLink: 'https://www.proby.io/interview?t=8ai1hGiN',
+    deadline: '2026-03-29',
+    status: 'active',
+    category: '가전',
+    estimatedTime: '3~5분',
+    maxParticipants: 10,
+    currentParticipants: 0,
+  },
+
+  {
     id: 9,
     title: '뱅킹 앱 디자인 평가 조사',
     description: '뱅킹 앱을 사용하실 때, 더 선호하는 디자인이 무엇인지를 이해하기 위해 기획된 조사입니다',
