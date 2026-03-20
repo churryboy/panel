@@ -406,6 +406,7 @@ const state = {
   currentTab: 'listings',
   currentListing: null,
   searchQuery: '',
+  authMode: 'login',
 };
 
 // ─── Storage Keys ───
@@ -687,6 +688,7 @@ async function login(email, password) {
 function logout() {
   localStorage.removeItem(KEYS.session);
   state.currentUser = null;
+  // 로그아웃 후에도 공고는 열람 가능해야 함
   showView('app');
 }
 
@@ -902,18 +904,56 @@ function updateHeaderAuth() {
   if (tabSettlement) tabSettlement.classList.toggle('hidden', !loggedIn);
 }
 
-function showView(name) {
+function showAuthForm(mode = 'login') {
+  state.authMode = mode === 'register' ? 'register' : 'login';
+  const loginForm = document.getElementById('login-form');
+  const registerForm = document.getElementById('register-form');
+  if (!loginForm || !registerForm) return;
+  loginForm.classList.toggle('hidden', state.authMode !== 'login');
+  registerForm.classList.toggle('hidden', state.authMode !== 'register');
+}
+
+function getRouteState() {
+  const params = new URLSearchParams(window.location.search);
+  const view = params.get('view') === 'app' ? 'app' : 'login';
+  const mode = params.get('mode') === 'register' ? 'register' : 'login';
+  return { view, mode };
+}
+
+function syncRoute(view, mode, replace = false) {
+  const url = new URL(window.location.href);
+  url.searchParams.set('view', view);
+  if (view === 'login') {
+    url.searchParams.set('mode', mode === 'register' ? 'register' : 'login');
+  } else {
+    url.searchParams.delete('mode');
+  }
+  const nextState = { view, mode: mode === 'register' ? 'register' : 'login' };
+  if (replace) {
+    window.history.replaceState(nextState, '', url);
+  } else {
+    window.history.pushState(nextState, '', url);
+  }
+}
+
+function showView(name, options = {}) {
+  const { mode = state.authMode, syncHistory = true, replace = false } = options;
   const loginView = document.getElementById('login-view');
   const appView = document.getElementById('app-view');
 
   if (name === 'login') {
     loginView.classList.remove('hidden');
     appView.classList.add('hidden');
+    showAuthForm(mode);
   } else {
     loginView.classList.add('hidden');
     appView.classList.remove('hidden');
     updateHeaderAuth();
     switchTab(state.currentTab);
+  }
+
+  if (syncHistory) {
+    syncRoute(name === 'app' ? 'app' : 'login', mode, replace);
   }
 }
 
@@ -1850,17 +1890,17 @@ function bindEvents() {
 
   // Toggle login/register
   document.getElementById('show-register').addEventListener('click', () => {
-    document.getElementById('login-form').classList.add('hidden');
-    document.getElementById('register-form').classList.remove('hidden');
+    showAuthForm('register');
     hideError('login-error');
     document.getElementById('verify-code-wrap').classList.add('hidden');
     document.getElementById('verify-hint').classList.add('hidden');
+    syncRoute('login', 'register');
   });
 
   document.getElementById('show-login').addEventListener('click', () => {
-    document.getElementById('register-form').classList.add('hidden');
-    document.getElementById('login-form').classList.remove('hidden');
+    showAuthForm('login');
     hideError('register-error');
+    syncRoute('login', 'login');
   });
 
   // Profile panel
@@ -1889,8 +1929,10 @@ function bindEvents() {
 
   // Logout
   document.getElementById('btn-logout').addEventListener('click', logout);
-  document.getElementById('btn-header-login').addEventListener('click', () => showView('login'));
+  document.getElementById('btn-header-login').addEventListener('click', () => showView('login', { mode: 'login' }));
   document.getElementById('btn-back-to-listings').addEventListener('click', () => showView('app'));
+  document.getElementById('btn-browse-listings-login')?.addEventListener('click', () => showView('app'));
+  document.getElementById('btn-browse-listings-register')?.addEventListener('click', () => showView('app'));
 
   // Tabs
   document.querySelectorAll('.tab').forEach(tab => {
@@ -1950,6 +1992,15 @@ function bindEvents() {
       closeTermsModal();
     }
   });
+
+  window.addEventListener('popstate', () => {
+    const route = getRouteState();
+    if (route.view === 'app') {
+      showView('app', { syncHistory: false });
+      return;
+    }
+    showView('login', { mode: route.mode, syncHistory: false });
+  });
 }
 
 // ─── Init ───
@@ -1960,7 +2011,14 @@ async function init() {
   bindEvents();
 
   checkSession();
-  showView('app');
+  const route = getRouteState();
+  if (state.currentUser) {
+    showView('app', { replace: true });
+  } else {
+    // 비로그인 유저도 공고 카드는 열람 가능
+    if (route.view === 'login') showView('login', { mode: route.mode, replace: true });
+    else showView('app', { replace: true });
+  }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
