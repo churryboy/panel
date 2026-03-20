@@ -420,7 +420,8 @@ const state = {
 // ─── Storage Keys ───
 const KEYS = {
   users: 'sp_users',
-  session: 'sp_session',
+  session: 'sp_session',        // 서명된 세션 토큰 (JWT 형식)
+  sessionUser: 'sp_session_user', // 세션 유저 캐시 (비밀번호 제외)
   listings: 'sp_listings',
   completed: 'sp_completed',
   payouts: 'sp_payouts',
@@ -608,38 +609,28 @@ async function verifyCode(phone, inputCode) {
 }
 
 async function register(name, email, password, phone, verificationCode) {
-  await syncUsersFromSupabase();
-  if (findUser(email)) return { ok: false, error: '이미 가입된 이메일입니다.' };
-  if (findUserByPhone(phone)) return { ok: false, error: '이미 가입된 전화번호입니다.' };
-  if (password.length < 6) return { ok: false, error: '비밀번호는 6자 이상이어야 합니다.' };
-  if (!(await verifyCode(phone, verificationCode))) return { ok: false, error: '인증번호가 일치하지 않거나 만료되었습니다. 다시 받아 입력하세요.' };
-
-  const normalizedPhone = normalizePhone(phone);
-  const users = getUsers();
-  const newUser = {
-    name,
-    email,
-    password,
-    phone: normalizedPhone,
-    phoneVerified: true,
-    emailNoticeAgreed: true,
-    createdAt: new Date().toISOString(),
-    bankName: '',
-    bankAccount: '',
-    birthdate: '',
-    gender: '',
-    job: '',
-  };
-  users.push(newUser);
-  setStore(KEYS.users, users);
-  await upsertUserToSupabase(newUser);
-  await syncUsersFromSupabase();
-  trackUserSignup({
-    email,
-    name,
-    phone_last4: normalizedPhone.slice(-4),
-  });
-  return { ok: true };
+  // 1) SMS 인증 코드 검증 (클라이언트→서버)
+  if (!(await verifyCode(phone, verificationCode))) {
+    return { ok: false, error: '인증번호가 일치하지 않거나 만료되었습니다. 다시 받아 입력하세요.' };
+  }
+  // 2) 서버에서 bcrypt 해시 + 중복검증 + Supabase 저장
+  try {
+    const res = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, email, password, phone }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) return { ok: false, error: data.error || '회원가입에 실패했습니다.' };
+    trackUserSignup({
+      email,
+      name,
+      phone_last4: String(phone).replace(/\D/g, '').slice(-4),
+    });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: '네트워크 오류가 발생했습니다.' };
+  }
 }
 
 async function deleteUser(email) {
@@ -649,71 +640,102 @@ async function deleteUser(email) {
   await syncUsersFromSupabase();
 }
 
+async function updateUserProfile(email, fields) {
+  if (!email || !fields) return false;
+  const row = { updated_at: new Date().toISOString() };
+  if (fields.name      !== undefined) row.name         = fields.name;
+  if (fields.birthdate !== undefined) row.birthdate     = fields.birthdate;
+  if (fields.gender    !== undefined) row.gender        = fields.gender;
+  if (fields.job       !== undefined) row.job           = fields.job;
+  if (fields.bankName  !== undefined) row.bank_name     = fields.bankName;
+  if (fields.bankAccount !== undefined) row.bank_account = fields.bankAccount;
+  try {
+    const res = await fetch(
+      `${SUPABASE_REST_BASE}/panel_users?email=eq.${encodeURIComponent(email)}`,
+      {
+        method: 'PATCH',
+        headers: { ...getSupabaseHeaders(), Prefer: 'return=minimal' },
+        body: JSON.stringify(row),
+      }
+    );
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 async function saveBankInfo(bankName, bankAccount) {
   if (!state.currentUser) return;
-  const users = getUsers();
-  const idx = users.findIndex(u => u.email === state.currentUser.email);
-  if (idx === -1) return;
-  users[idx].bankName = bankName;
-  users[idx].bankAccount = bankAccount;
-  setStore(KEYS.users, users);
   state.currentUser.bankName = bankName;
   state.currentUser.bankAccount = bankAccount;
-  await upsertUserToSupabase(users[idx]);
+  setStore(KEYS.sessionUser, { ...state.currentUser });
+  await updateUserProfile(state.currentUser.email, { bankName, bankAccount });
 }
 
 async function saveProfile(name, birthdate, gender, job) {
   if (!state.currentUser) return;
-  const users = getUsers();
-  const idx = users.findIndex(u => u.email === state.currentUser.email);
-  if (idx === -1) return;
-  users[idx].name = name;
-  users[idx].birthdate = birthdate;
-  users[idx].gender = gender;
-  users[idx].job = job;
-  setStore(KEYS.users, users);
   Object.assign(state.currentUser, { name, birthdate, gender, job });
+  setStore(KEYS.sessionUser, { ...state.currentUser });
   document.getElementById('header-user-name').textContent = name;
   if (window.mixpanel && window.mixpanel.identify && name) {
     window.mixpanel.identify(String(name).trim());
   }
-  await upsertUserToSupabase(users[idx]);
+  await updateUserProfile(state.currentUser.email, { name, birthdate, gender, job });
 }
 
 async function login(email, password) {
-  await syncUsersFromSupabase();
-  const user = findUser(email);
-  if (!user) return { ok: false, error: '등록되지 않은 이메일입니다.' };
-  if (user.password !== password) return { ok: false, error: '비밀번호가 일치하지 않습니다.' };
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) return { ok: false, error: data.error || '로그인에 실패했습니다.' };
 
-  setStore(KEYS.session, email);
-  state.currentUser = user;
-  if (window.mixpanel && window.mixpanel.identify && user.name) {
-    window.mixpanel.identify(String(user.name).trim());
+    setStore(KEYS.session, data.token);
+    setStore(KEYS.sessionUser, data.user);
+    state.currentUser = data.user;
+    if (window.mixpanel && window.mixpanel.identify && data.user.name) {
+      window.mixpanel.identify(String(data.user.name).trim());
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: '네트워크 오류가 발생했습니다.' };
   }
-  return { ok: true };
 }
 
 function logout() {
   localStorage.removeItem(KEYS.session);
+  localStorage.removeItem(KEYS.sessionUser);
   state.currentUser = null;
   // 로그아웃 후에도 공고는 열람 가능해야 함
   showView('app');
 }
 
 function checkSession() {
-  const email = getStore(KEYS.session);
-  if (email) {
-    const user = findUser(email);
-    if (user) {
-      state.currentUser = user;
-      if (window.mixpanel && window.mixpanel.identify && user.name) {
-        window.mixpanel.identify(String(user.name).trim());
-      }
-      return true;
+  const token = getStore(KEYS.session);
+  const user  = getStore(KEYS.sessionUser);
+  if (!token || !user || !user.email) return false;
+  try {
+    // 토큰의 페이로드 부분(첫 번째 segment)만 디코딩해 만료 확인
+    const [dataB64] = token.split('.');
+    const payload = JSON.parse(atob(dataB64));
+    if (!payload.email || payload.exp < Date.now()) {
+      localStorage.removeItem(KEYS.session);
+      localStorage.removeItem(KEYS.sessionUser);
+      return false;
     }
+    state.currentUser = user;
+    if (window.mixpanel && window.mixpanel.identify && user.name) {
+      window.mixpanel.identify(String(user.name).trim());
+    }
+    return true;
+  } catch {
+    localStorage.removeItem(KEYS.session);
+    localStorage.removeItem(KEYS.sessionUser);
+    return false;
   }
-  return false;
 }
 
 // ─── Listings ───
@@ -1000,7 +1022,7 @@ function buildListingCard(listing) {
   const actionBtn = completed
     ? `<button class="card-btn-done" disabled>
          <span class="material-symbols-outlined text-base" style="font-variation-settings:'FILL'1">check_circle</span>
-         검토 중
+         정산 대기 중
        </button>`
     : isActive
       ? `<a href="${listing.surveyLink}" target="_blank" rel="noopener noreferrer"
@@ -1022,7 +1044,7 @@ function buildListingCard(listing) {
         </div>
         <div class="flex items-center gap-2">
           <span class="badge ${!isActive ? 'badge-closed' : (completed || listing.deadline) ? 'badge-done' : 'badge-active'}">
-            ${!isActive ? '마감' : completed ? (listing.deadline ? `${formatDate(listing.deadline)} 마감` : '검토 중') : (listing.deadline ? `${formatDate(listing.deadline)} 마감` : '모집중')}
+            ${!isActive ? '마감' : completed ? (listing.deadline ? `${formatDate(listing.deadline)} 마감` : '정산 대기 중') : (listing.deadline ? `${formatDate(listing.deadline)} 마감` : '모집중')}
           </span>
           ${editBtn}
         </div>
@@ -1106,7 +1128,7 @@ function renderListings() {
       if (listing) trackSurveyClick({ title: listing.title, listing_id: listing.id, category: listing.category, source: 'card' });
       markCompleted(id);
       renderListings();
-      showToast('검토 중으로 기록되었습니다.');
+      showToast('정산 대기 중으로 기록되었습니다.');
     });
   });
 }
@@ -1125,7 +1147,7 @@ function renderDetail(listingId) {
       <div class="flex flex-wrap gap-2 mb-4">
         <span class="badge badge-category">${listing.category}</span>
         <span class="badge ${!isActive ? 'badge-closed' : (completed || listing.deadline) ? 'badge-done' : 'badge-active'}">
-          ${!isActive ? '마감' : completed ? (listing.deadline ? formatDate(listing.deadline) + ' 마감' : '검토 중') : (listing.deadline ? formatDate(listing.deadline) + ' 마감' : '모집중')}
+          ${!isActive ? '마감' : completed ? (listing.deadline ? formatDate(listing.deadline) + ' 마감' : '정산 대기 중') : (listing.deadline ? formatDate(listing.deadline) + ' 마감' : '모집중')}
         </span>
       </div>
       <h1 class="text-2xl md:text-3xl font-black tracking-tight leading-tight mb-3">
@@ -1173,7 +1195,7 @@ function renderDetail(listingId) {
       ` : completed ? `
         <div class="flex items-center gap-2 text-accent-lt text-sm font-semibold">
           <span class="material-symbols-outlined">schedule</span>
-          검토 중
+          정산 대기 중
         </div>
       ` : `
         <div class="flex items-center gap-2 text-white/40 text-sm font-semibold">
@@ -1189,7 +1211,7 @@ function renderDetail(listingId) {
     completeBtn.addEventListener('click', () => {
       markCompleted(listingId);
       renderDetail(listingId);
-      showToast('검토 중으로 기록되었습니다.');
+      showToast('정산 대기 중으로 기록되었습니다.');
     });
   }
   const surveyLinkEl = container.querySelector('.btn-survey');
@@ -1295,7 +1317,7 @@ function renderSettlement() {
           <div>
             <p class="text-sm font-semibold leading-tight flex items-center gap-2 flex-wrap">
               ${c.title}
-              ${showBadge ? '<span class="badge-settlement-done">정산 완료</span>' : '<span class="badge-review">검토중</span>'}
+              ${showBadge ? '<span class="badge-settlement-done">정산 완료</span>' : '<span class="badge-review">정산 대기 중</span>'}
             </p>
             <p class="text-xs text-white/35 mt-0.5">${formatDate(c.completedAt)}</p>
           </div>
@@ -1736,8 +1758,8 @@ async function withdrawAccount() {
 }
 
 function renderProfilePanel() {
-  const u = findUser(state.currentUser.email) || state.currentUser;
-  if (!document.getElementById('profile-form-inner')) return;
+  const u = state.currentUser;
+  if (!u || !document.getElementById('profile-form-inner')) return;
 
   const nameEl  = document.getElementById('panel-user-name-display');
   const emailEl = document.getElementById('panel-user-email-display');
