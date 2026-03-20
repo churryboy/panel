@@ -385,6 +385,15 @@ function trackSurveyClick(payload) {
   });
 }
 
+function trackUserSignup(payload) {
+  sendMixpanelEvent('회원가입 완료', {
+    email: payload.email || '',
+    name: payload.name || '',
+    phone_last4: payload.phone_last4 || '',
+    source: payload.source || 'register_form',
+  });
+}
+
 /** 관리자가 조사 추가 모달로 새 공고를 생성했을 때 */
 function trackListingCreated(listing) {
   if (!listing) return;
@@ -489,6 +498,11 @@ async function register(name, email, password, phone, verificationCode) {
   setStore(KEYS.users, users);
   await upsertUserToSupabase(newUser);
   await syncUsersFromSupabase();
+  trackUserSignup({
+    email,
+    name,
+    phone_last4: normalizedPhone.slice(-4),
+  });
   pendingVerification = { phone: '', code: '', expiresAt: 0 };
   return { ok: true };
 }
