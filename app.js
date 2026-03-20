@@ -201,10 +201,18 @@ async function syncListingsFromSupabase() {
       const byId = new Map(rows.map(r => [r.id, rowToListing(r)]));
       SAMPLE_LISTINGS.forEach(sample => {
         const existing = byId.get(sample.id);
-        byId.set(sample.id, existing ? { ...existing, ...sample } : sample);
+        // 운영 중 수정된 값(Supabase)을 우선 유지하고, 샘플은 누락 필드 보완용으로만 사용
+        byId.set(sample.id, existing ? { ...sample, ...existing } : sample);
       });
-      setStore(KEYS.listings, [...byId.values()]);
-      upsertListingsToSupabase(SAMPLE_LISTINGS).catch(() => {});
+      const merged = [...byId.values()];
+      setStore(KEYS.listings, merged);
+
+      // Supabase에 없는 샘플 ID만 초기 시드 (기존 운영 데이터 덮어쓰기 방지)
+      const existingIds = new Set((rows || []).map(r => Number(r.id)));
+      const missingSamples = SAMPLE_LISTINGS.filter(sample => !existingIds.has(Number(sample.id)));
+      if (missingSamples.length > 0) {
+        upsertListingsToSupabase(missingSamples).catch(() => {});
+      }
     } else {
       setStore(KEYS.listings, SAMPLE_LISTINGS);
       upsertListingsToSupabase(SAMPLE_LISTINGS).catch(() => {});
@@ -526,7 +534,8 @@ function initData() {
     const byId = new Map(stored.map(l => [l.id, l]));
     SAMPLE_LISTINGS.forEach(sample => {
       const existing = byId.get(sample.id);
-      byId.set(sample.id, existing ? { ...existing, ...sample } : sample);
+      // 로컬 저장값(수정 데이터)을 우선 유지하고 샘플은 누락 필드만 채움
+      byId.set(sample.id, existing ? { ...sample, ...existing } : sample);
     });
     setStore(KEYS.listings, [...byId.values()]);
   }
