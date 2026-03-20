@@ -444,6 +444,65 @@ function setStore(key, value) {
 
 // ─── Mixpanel: 설문 참여 클릭 로깅 (SDK 실패 시 Track API 폴백) ───
 var MIXPANEL_TOKEN = typeof window !== 'undefined' && window.MIXPANEL_TOKEN ? window.MIXPANEL_TOKEN : '1a30b5a4b298ee5477f21dc2a26e2307';
+var ENTRY_ATTR_KEY = 'sp_entry_attribution_v1';
+var LANDING_TRACKED_KEY = 'sp_landing_tracked_v1';
+
+function inferSourceFromReferrer(referrer) {
+  if (!referrer) return 'direct';
+  var r = String(referrer).toLowerCase();
+  if (r.includes('kakao')) return 'kakao';
+  if (r.includes('linkedin')) return 'linkedin';
+  if (r.includes('google')) return 'google';
+  if (r.includes('naver')) return 'naver';
+  if (r.includes('instagram')) return 'instagram';
+  if (r.includes('facebook')) return 'facebook';
+  if (r.includes('t.co') || r.includes('twitter')) return 'twitter';
+  try {
+    return new URL(referrer).hostname || 'referral';
+  } catch {
+    return 'referral';
+  }
+}
+
+function getTrafficProps() {
+  try {
+    var url = new URL(window.location.href);
+    var utmSource = url.searchParams.get('utm_source') || '';
+    var utmMedium = url.searchParams.get('utm_medium') || '';
+    var utmCampaign = url.searchParams.get('utm_campaign') || '';
+    var utmContent = url.searchParams.get('utm_content') || '';
+    var utmTerm = url.searchParams.get('utm_term') || '';
+    var referrer = document.referrer || '';
+    var currentSource = utmSource || inferSourceFromReferrer(referrer);
+
+    var firstTouch = getStore(ENTRY_ATTR_KEY, null);
+    if (!firstTouch) {
+      firstTouch = {
+        first_source: currentSource || 'direct',
+        first_referrer: referrer || '',
+        first_landing_path: url.pathname + url.search,
+        first_seen_at: new Date().toISOString(),
+      };
+      setStore(ENTRY_ATTR_KEY, firstTouch);
+    }
+
+    return {
+      entry_source: currentSource || 'direct',
+      referrer: referrer || '',
+      landing_path: url.pathname + url.search,
+      utm_source: utmSource,
+      utm_medium: utmMedium,
+      utm_campaign: utmCampaign,
+      utm_content: utmContent,
+      utm_term: utmTerm,
+      first_touch_source: firstTouch.first_source || '',
+      first_touch_referrer: firstTouch.first_referrer || '',
+      first_touch_landing_path: firstTouch.first_landing_path || '',
+    };
+  } catch (e) {
+    return { entry_source: 'direct' };
+  }
+}
 
 function getDistinctId() {
   if (typeof state !== 'undefined' && state.currentUser && state.currentUser.name) {
@@ -465,6 +524,10 @@ function getDistinctId() {
 
 function sendMixpanelEvent(eventName, props) {
   var distinctId = getDistinctId();
+  var traffic = getTrafficProps();
+  var mergedProps = {};
+  for (var t in traffic) mergedProps[t] = traffic[t];
+  for (var p in (props || {})) mergedProps[p] = props[p];
   if (
     typeof window.mixpanel !== 'undefined' &&
     window.mixpanel.track &&
@@ -472,7 +535,7 @@ function sendMixpanelEvent(eventName, props) {
   ) {
     try {
       window.mixpanel.identify(distinctId);
-      window.mixpanel.track(eventName, props);
+      window.mixpanel.track(eventName, mergedProps);
     } catch (e) {}
   }
   try {
@@ -484,7 +547,7 @@ function sendMixpanelEvent(eventName, props) {
         time: Math.floor(Date.now() / 1000),
       },
     };
-    for (var k in props) event.properties[k] = props[k];
+    for (var k in mergedProps) event.properties[k] = mergedProps[k];
     var data = btoa(unescape(encodeURIComponent(JSON.stringify([event]))));
     fetch('https://api.mixpanel.com/track', {
       method: 'POST',
@@ -492,6 +555,16 @@ function sendMixpanelEvent(eventName, props) {
       body: 'data=' + encodeURIComponent(data),
     }).catch(function () {});
   } catch (e) {}
+}
+
+function trackLandingViewedOnce() {
+  try {
+    if (sessionStorage.getItem(LANDING_TRACKED_KEY) === '1') return;
+    sessionStorage.setItem(LANDING_TRACKED_KEY, '1');
+  } catch (e) {}
+  sendMixpanelEvent('랜딩 조회', {
+    source: 'page_load',
+  });
 }
 
 function trackSurveyClick(payload) {
@@ -2038,6 +2111,7 @@ function bindEvents() {
 // ─── Init ───
 async function init() {
   initData();
+  trackLandingViewedOnce();
   // 세션·라우트 반영은 네트워크(sync)보다 먼저 — 그렇지 않으면 HTML 기본값(로그인 뷰)이 잠깐 보임(FOUC)
   checkSession();
   const route = getRouteState();
