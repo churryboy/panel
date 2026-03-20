@@ -48,6 +48,8 @@ function userToRow(user) {
     name: user.name || '',
     password: user.password || '',
     phone: user.phone || '',
+    phone_verified: Boolean(user.phoneVerified),
+    email_notice_agreed: Boolean(user.emailNoticeAgreed),
     created_at: user.createdAt || new Date().toISOString(),
     bank_name: user.bankName || '',
     bank_account: user.bankAccount || '',
@@ -64,6 +66,8 @@ function rowToUser(row) {
     name: row.name || '',
     password: row.password || '',
     phone: row.phone || '',
+    phoneVerified: Boolean(row.phone_verified),
+    emailNoticeAgreed: Boolean(row.email_notice_agreed),
     createdAt: row.created_at || new Date().toISOString(),
     bankName: row.bank_name || '',
     bankAccount: row.bank_account || '',
@@ -556,25 +560,41 @@ function findUserByPhone(phone) {
   return getUsers().find(u => normalizePhone(u.phone) === normalized);
 }
 
-// 인증번호 발급 상태 (데모: 메모리 저장. 실제 서비스에서는 백엔드에서 SMS 발송 후 세션/DB에 저장)
-let pendingVerification = { phone: '', code: '', expiresAt: 0 };
-const VERIFY_EXPIRE_MS = 5 * 60 * 1000; // 5분
-
-function sendVerificationCode(phone) {
+async function sendVerificationCode(phone) {
   const normalized = normalizePhone(phone);
   if (normalized.length < 10) return { ok: false, error: '올바른 전화번호를 입력하세요.' };
   if (findUserByPhone(phone)) return { ok: false, error: '이미 가입된 전화번호입니다.' };
-
-  const code = String(Math.floor(100000 + Math.random() * 900000));
-  pendingVerification = { phone: normalized, code, expiresAt: Date.now() + VERIFY_EXPIRE_MS };
-  return { ok: true, code };
+  try {
+    const res = await fetch('/api/sms/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone: normalized }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || '인증번호 발송에 실패했습니다. 잠시 후 다시 시도해주세요.' };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: '네트워크 오류로 인증번호 발송에 실패했습니다.' };
+  }
 }
 
-function verifyCode(phone, inputCode) {
+async function verifyCode(phone, inputCode) {
   const normalized = normalizePhone(phone);
-  if (pendingVerification.phone !== normalized) return false;
-  if (Date.now() > pendingVerification.expiresAt) return false;
-  return pendingVerification.code === (inputCode || '').trim();
+  const code = (inputCode || '').trim();
+  if (!normalized || !code) return false;
+  try {
+    const res = await fetch('/api/sms/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone: normalized, code }),
+    });
+    const data = await res.json().catch(() => ({}));
+    return !!(res.ok && data.ok);
+  } catch (e) {
+    return false;
+  }
 }
 
 async function register(name, email, password, phone, verificationCode) {
@@ -582,7 +602,7 @@ async function register(name, email, password, phone, verificationCode) {
   if (findUser(email)) return { ok: false, error: '이미 가입된 이메일입니다.' };
   if (findUserByPhone(phone)) return { ok: false, error: '이미 가입된 전화번호입니다.' };
   if (password.length < 6) return { ok: false, error: '비밀번호는 6자 이상이어야 합니다.' };
-  if (!verifyCode(phone, verificationCode)) return { ok: false, error: '인증번호가 일치하지 않거나 만료되었습니다. 다시 받아 입력하세요.' };
+  if (!(await verifyCode(phone, verificationCode))) return { ok: false, error: '인증번호가 일치하지 않거나 만료되었습니다. 다시 받아 입력하세요.' };
 
   const normalizedPhone = normalizePhone(phone);
   const users = getUsers();
@@ -591,6 +611,8 @@ async function register(name, email, password, phone, verificationCode) {
     email,
     password,
     phone: normalizedPhone,
+    phoneVerified: true,
+    emailNoticeAgreed: true,
     createdAt: new Date().toISOString(),
     bankName: '',
     bankAccount: '',
@@ -607,7 +629,6 @@ async function register(name, email, password, phone, verificationCode) {
     name,
     phone_last4: normalizedPhone.slice(-4),
   });
-  pendingVerification = { phone: '', code: '', expiresAt: 0 };
   return { ok: true };
 }
 
@@ -1476,6 +1497,43 @@ function hideError(elementId) {
   el.classList.add('hidden');
 }
 
+async function openTermsModal(type) {
+  const modal = document.getElementById('terms-modal');
+  const titleEl = document.getElementById('terms-modal-title');
+  const contentEl = document.getElementById('terms-modal-content');
+  if (!modal || !titleEl || !contentEl) return;
+
+  const map = {
+    service: {
+      title: '서비스 이용약관',
+      path: './terms/service-terms.md',
+    },
+    privacy: {
+      title: '개인정보 수집 및 이용 동의',
+      path: './terms/privacy-collection-consent.md',
+    },
+  };
+  const target = map[type];
+  if (!target) return;
+
+  titleEl.textContent = target.title;
+  contentEl.textContent = '불러오는 중...';
+  modal.classList.remove('hidden');
+
+  try {
+    const res = await fetch(target.path);
+    if (!res.ok) throw new Error('약관 파일을 불러올 수 없습니다.');
+    const text = await res.text();
+    contentEl.textContent = text;
+  } catch (e) {
+    contentEl.textContent = '약관 원문을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.';
+  }
+}
+
+function closeTermsModal() {
+  document.getElementById('terms-modal')?.classList.add('hidden');
+}
+
 // ─── Admin: Add / Edit listing ───
 function openAddListingModal() {
   if (!isAdmin()) return;
@@ -1725,10 +1783,15 @@ function bindEvents() {
   });
 
   // 인증번호 받기
-  document.getElementById('btn-send-verify').addEventListener('click', () => {
+  document.getElementById('btn-send-verify').addEventListener('click', async () => {
     const phone = document.getElementById('reg-phone').value.trim();
     hideError('register-error');
-    const result = sendVerificationCode(phone);
+    const btn = document.getElementById('btn-send-verify');
+    btn.disabled = true;
+    btn.textContent = '발송 중...';
+    const result = await sendVerificationCode(phone);
+    btn.disabled = false;
+    btn.textContent = '인증번호 받기';
     if (!result.ok) {
       showError('register-error', result.error);
       return;
@@ -1738,8 +1801,7 @@ function bindEvents() {
     document.getElementById('reg-verify-code').focus();
     const hint = document.getElementById('verify-hint');
     hint.classList.remove('hidden');
-    hint.textContent = `데모: 인증번호 [ ${result.code} ] 를 입력하세요. (실제 서비스에서는 SMS로 발송됩니다.)`;
-    hint.classList.add('text-accent-lt');
+    hint.textContent = '입력하신 번호로 인증번호를 발송했습니다. 문자 메시지를 확인해 주세요.';
     showToast('인증번호가 발송되었습니다.');
   });
 
@@ -1759,6 +1821,13 @@ function bindEvents() {
     }
     if (password !== confirm) {
       showError('register-error', '비밀번호가 일치하지 않습니다.');
+      return;
+    }
+    const agreedService = document.getElementById('reg-agree-service')?.checked;
+    const agreedPrivacy = document.getElementById('reg-agree-privacy')?.checked;
+    const agreedEmailNotice = document.getElementById('reg-agree-email-notice')?.checked;
+    if (!agreedService || !agreedPrivacy || !agreedEmailNotice) {
+      showError('register-error', '필수 동의 항목(약관/개인정보/이메일 알림)에 모두 동의해주세요.');
       return;
     }
     const result = await register(name, email, password, phone, verificationCode);
@@ -1811,6 +1880,12 @@ function bindEvents() {
   });
 
   document.getElementById('btn-withdraw').addEventListener('click', () => { withdrawAccount(); });
+  document.getElementById('btn-view-service-terms')?.addEventListener('click', () => openTermsModal('service'));
+  document.getElementById('btn-view-privacy-terms')?.addEventListener('click', () => openTermsModal('privacy'));
+  document.getElementById('btn-close-terms-modal')?.addEventListener('click', closeTermsModal);
+  document.getElementById('terms-modal')?.addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeTermsModal();
+  });
 
   // Logout
   document.getElementById('btn-logout').addEventListener('click', logout);
@@ -1872,6 +1947,7 @@ function bindEvents() {
       closePayoutModal();
       closeProfilePanel();
       closeAddListingModal();
+      closeTermsModal();
     }
   });
 }
