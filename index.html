@@ -1726,9 +1726,23 @@ body {
 }
 
 .btn-primary:disabled {
-  opacity: 0.5;
+  opacity: 0.7;
   cursor: not-allowed;
   transform: none;
+}
+
+/* ─── SPINNER ─── */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.btn-spinner {
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.65s linear infinite;
+  flex-shrink: 0;
 }
 
 .btn-ghost {
@@ -1961,7 +1975,52 @@ body {
   align-items: center;
   gap: 0.75rem;
   font-size: 0.75rem;
+  line-height: 1;
   color: rgba(255, 255, 255, 0.4);
+}
+
+/* 1행·2행을 하나의 3-컬럼 그리드로 묶어 컬럼 정렬 */
+.listing-card-footer-grid {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  row-gap: 0.5rem;
+  column-gap: 0.75rem;
+  font-size: 0.75rem;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.4);
+  align-items: center;
+}
+
+.lcf-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  line-height: 1;
+  min-width: 0;
+}
+
+/* Material Icons 크기 고정 */
+.listing-card-footer-grid .material-symbols-outlined {
+  font-size: 0.875rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.listing-card-footer-row--meta {
+  flex-wrap: wrap;
+}
+
+.listing-card-footer-conditions {
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  font-size: 0.75rem;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.listing-cond-missing {
+  color: rgba(255, 255, 255, 0.25);
+  font-size: 0.7rem;
 }
 
 .listing-card-footer-cta {
@@ -2873,6 +2932,46 @@ select.sf-input option {
             <input type="number" id="listing-maxParticipants" class="sf-input w-full" placeholder="예: 50" min="1" step="1">
           </div>
         </div>
+
+        <div class="pt-4 mt-1 border-t border-white/[0.08]">
+          <p class="text-xs font-bold text-white/55 uppercase tracking-wider mb-3">참여 조건 <span class="text-white/35 font-normal normal-case">(카드에 노출)</span></p>
+          <div class="space-y-4">
+            <div>
+              <span class="text-xs text-white/45 block mb-2">성별 · 복수 선택 가능</span>
+              <div class="flex flex-wrap gap-4">
+                <label class="inline-flex items-center gap-2 text-sm text-white/85 cursor-pointer">
+                  <input type="checkbox" id="listing-gender-male" class="rounded border-white/25 bg-white/5 text-accent focus:ring-accent/40"> 남자
+                </label>
+                <label class="inline-flex items-center gap-2 text-sm text-white/85 cursor-pointer">
+                  <input type="checkbox" id="listing-gender-female" class="rounded border-white/25 bg-white/5 text-accent focus:ring-accent/40"> 여자
+                </label>
+              </div>
+            </div>
+            <div>
+              <span class="text-xs text-white/45 block mb-2">연령대 · 복수 선택 (연속된 대는 한 줄로 합쳐 표시)</span>
+              <div class="flex flex-wrap gap-x-4 gap-y-2">
+                <label class="inline-flex items-center gap-1.5 text-xs text-white/80 cursor-pointer"><input type="checkbox" id="listing-age-10" class="rounded border-white/25 bg-white/5 text-accent"> 10대</label>
+                <label class="inline-flex items-center gap-1.5 text-xs text-white/80 cursor-pointer"><input type="checkbox" id="listing-age-20" class="rounded border-white/25 bg-white/5 text-accent"> 20대</label>
+                <label class="inline-flex items-center gap-1.5 text-xs text-white/80 cursor-pointer"><input type="checkbox" id="listing-age-30" class="rounded border-white/25 bg-white/5 text-accent"> 30대</label>
+                <label class="inline-flex items-center gap-1.5 text-xs text-white/80 cursor-pointer"><input type="checkbox" id="listing-age-40" class="rounded border-white/25 bg-white/5 text-accent"> 40대</label>
+                <label class="inline-flex items-center gap-1.5 text-xs text-white/80 cursor-pointer"><input type="checkbox" id="listing-age-50" class="rounded border-white/25 bg-white/5 text-accent"> 50대</label>
+                <label class="inline-flex items-center gap-1.5 text-xs text-white/80 cursor-pointer"><input type="checkbox" id="listing-age-60" class="rounded border-white/25 bg-white/5 text-accent"> 60대</label>
+              </div>
+            </div>
+            <div>
+              <span class="text-xs text-white/45 block mb-2">참여 기기 · 복수 선택 가능</span>
+              <div class="flex flex-wrap gap-4">
+                <label class="inline-flex items-center gap-2 text-sm text-white/85 cursor-pointer">
+                  <input type="checkbox" id="listing-device-pc" class="rounded border-white/25 bg-white/5 text-accent focus:ring-accent/40"> PC
+                </label>
+                <label class="inline-flex items-center gap-2 text-sm text-white/85 cursor-pointer">
+                  <input type="checkbox" id="listing-device-mobile" class="rounded border-white/25 bg-white/5 text-accent focus:ring-accent/40"> 핸드폰
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="text-xs text-white/40">
           사례비는 <span class="text-white/70 font-semibold">예상 소요시간</span> 기준으로 자동 책정됩니다.
         </div>

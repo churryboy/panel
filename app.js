@@ -90,10 +90,27 @@ function listingToRow(listing) {
     estimated_time: listing.estimatedTime || '',
     max_participants: listing.maxParticipants || 0,
     current_participants: listing.currentParticipants || 0,
+    participant_genders: JSON.stringify(listing.participantGenders || []),
+    participant_age_ranges: JSON.stringify(listing.participantAgeRanges || []),
+    participant_devices: JSON.stringify(listing.participantDevices || []),
   };
 }
 
+function parseListingJsonArray(val, fallback = []) {
+  if (Array.isArray(val)) return val;
+  if (typeof val === 'string' && val.trim()) {
+    try {
+      const p = JSON.parse(val);
+      return Array.isArray(p) ? p : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
+}
+
 function rowToListing(row) {
+  const ageRaw = parseListingJsonArray(row.participant_age_ranges, []);
   return {
     id: row.id,
     title: row.title || '',
@@ -106,6 +123,9 @@ function rowToListing(row) {
     estimatedTime: row.estimated_time || '',
     maxParticipants: row.max_participants || 0,
     currentParticipants: row.current_participants || 0,
+    participantGenders: parseListingJsonArray(row.participant_genders, []),
+    participantAgeRanges: ageRaw.map(Number).filter(n => [10, 20, 30, 40, 50, 60].includes(n)),
+    participantDevices: parseListingJsonArray(row.participant_devices, []),
   };
 }
 
@@ -198,11 +218,31 @@ async function syncListingsFromSupabase() {
     }
 
     if (rows && rows.length > 0) {
-      const byId = new Map(rows.map(r => [r.id, rowToListing(r)]));
+      // 로컬에 저장된 participant 필드를 보존하기 위해 기존 localStorage 값을 먼저 읽어둠
+      const localListings = getStore(KEYS.listings, []);
+      const localById = new Map(localListings.map(l => [l.id, l]));
+
+      const byId = new Map(rows.map(r => {
+        const fromDb = rowToListing(r);
+        const local = localById.get(r.id) || {};
+        // DB에 participant 컬럼이 없을 경우(빈 배열) 로컬 값으로 보완
+        if (!fromDb.participantGenders.length && local.participantGenders?.length) fromDb.participantGenders = local.participantGenders;
+        if (!fromDb.participantAgeRanges.length && local.participantAgeRanges?.length) fromDb.participantAgeRanges = local.participantAgeRanges;
+        if (!fromDb.participantDevices.length && local.participantDevices?.length) fromDb.participantDevices = local.participantDevices;
+        return [r.id, fromDb];
+      }));
       SAMPLE_LISTINGS.forEach(sample => {
         const existing = byId.get(sample.id);
-        // 운영 중 수정된 값(Supabase)을 우선 유지하고, 샘플은 누락 필드 보완용으로만 사용
-        byId.set(sample.id, existing ? { ...sample, ...existing } : sample);
+        if (existing) {
+          // sample의 participant 기본값은 existing이 빈 배열일 때만 보완
+          const merged = { ...sample, ...existing };
+          if (!existing.participantGenders.length) merged.participantGenders = sample.participantGenders || [];
+          if (!existing.participantAgeRanges.length) merged.participantAgeRanges = sample.participantAgeRanges || [];
+          if (!existing.participantDevices.length) merged.participantDevices = sample.participantDevices || [];
+          byId.set(sample.id, merged);
+        } else {
+          byId.set(sample.id, sample);
+        }
       });
       const merged = [...byId.values()];
       setStore(KEYS.listings, merged);
@@ -406,7 +446,12 @@ const SAMPLE_LISTINGS = [
     maxParticipants: 5,
     currentParticipants: 0,
   },
-];
+].map(l => ({
+  participantGenders: ['male', 'female'],
+  participantAgeRanges: [20, 30, 40, 50],
+  participantDevices: ['pc', 'mobile'],
+  ...l,
+}));
 
 // ─── State ───
 const state = {
@@ -620,6 +665,9 @@ function trackListingCreated(listing) {
     deadline: listing.deadline || '',
     max_participants: listing.maxParticipants,
     estimated_time: listing.estimatedTime || '',
+    participant_genders: (listing.participantGenders || []).join(','),
+    participant_age_ranges: (listing.participantAgeRanges || []).join(','),
+    participant_devices: (listing.participantDevices || []).join(','),
     source: 'admin_create',
   });
 }
@@ -847,10 +895,89 @@ function checkSession() {
   }
 }
 
+// ─── 참여 조건 (카드 푸터 · 상세 · 어드민) ───
+const PART_GENDER_LABELS = { male: '남자', female: '여자' };
+const PART_DEVICE_LABELS = { pc: 'PC', mobile: '핸드폰' };
+const PART_AGE_ORDER = [10, 20, 30, 40, 50, 60];
+
+function enrichListing(l) {
+  if (!l) return l;
+  return {
+    ...l,
+    participantGenders: parseListingJsonArray(l.participantGenders, []),
+    participantAgeRanges: parseListingJsonArray(l.participantAgeRanges, [])
+      .map(Number)
+      .filter(n => PART_AGE_ORDER.includes(n)),
+    participantDevices: parseListingJsonArray(l.participantDevices, []),
+  };
+}
+
+function formatParticipantGenders(arr) {
+  if (!arr || !arr.length) return '';
+  const order = ['male', 'female'];
+  const sorted = [...new Set(arr)].sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  return sorted.map(g => PART_GENDER_LABELS[g] || g).join(' · ');
+}
+
+function formatParticipantAgeRanges(arr) {
+  if (!arr || !arr.length) return '';
+  const sorted = [...new Set(arr.map(Number))].filter(n => PART_AGE_ORDER.includes(n)).sort((a, b) => a - b);
+  if (!sorted.length) return '';
+  const parts = [];
+  let s = sorted[0];
+  let e = sorted[0];
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i] === e + 10) e = sorted[i];
+    else {
+      parts.push(s === e ? `${s}대` : `${s}대~${e}대`);
+      s = e = sorted[i];
+    }
+  }
+  parts.push(s === e ? `${s}대` : `${s}대~${e}대`);
+  return parts.join(', ');
+}
+
+function formatParticipantDevices(arr) {
+  if (!arr || !arr.length) return '';
+  const order = ['pc', 'mobile'];
+  const sorted = [...new Set(arr)].sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  return sorted.map(d => PART_DEVICE_LABELS[d] || d).join(' · ');
+}
+
+// 상세 화면용 (기존 inline)
+function buildListingConditionsHtml(listing) {
+  const g = formatParticipantGenders(listing.participantGenders);
+  const a = formatParticipantAgeRanges(listing.participantAgeRanges);
+  const d = formatParticipantDevices(listing.participantDevices);
+  if (!g && !a && !d) {
+    return '<span class="listing-cond-missing">참여 조건 미설정</span>';
+  }
+  const chunks = [];
+  if (g) chunks.push(`<span class="flex items-center gap-1"><span class="material-symbols-outlined text-sm">wc</span>${escapeHtml(g)}</span>`);
+  if (a) chunks.push(`<span class="flex items-center gap-1"><span class="material-symbols-outlined text-sm">cake</span>${escapeHtml(a)}</span>`);
+  if (d) chunks.push(`<span class="flex items-center gap-1"><span class="material-symbols-outlined text-sm">devices</span>${escapeHtml(d)}</span>`);
+  return chunks.join('');
+}
+
+// 카드 푸터 그리드용 — 각 조건이 독립 셀로 들어가야 1행과 컬럼이 맞음
+function buildListingConditionsGridHtml(listing) {
+  const g = formatParticipantGenders(listing.participantGenders);
+  const a = formatParticipantAgeRanges(listing.participantAgeRanges);
+  const d = formatParticipantDevices(listing.participantDevices);
+  if (!g && !a && !d) {
+    return `<span class="lcf-cell listing-cond-missing" style="grid-column:1/-1">참여 조건 미설정</span>`;
+  }
+  return [
+    g ? `<span class="lcf-cell flex items-center gap-1"><span class="material-symbols-outlined text-sm">wc</span>${escapeHtml(g)}</span>` : `<span class="lcf-cell"></span>`,
+    a ? `<span class="lcf-cell flex items-center gap-1"><span class="material-symbols-outlined text-sm">cake</span>${escapeHtml(a)}</span>` : `<span class="lcf-cell"></span>`,
+    d ? `<span class="lcf-cell flex items-center gap-1"><span class="material-symbols-outlined text-sm">devices</span>${escapeHtml(d)}</span>` : `<span class="lcf-cell"></span>`,
+  ].join('');
+}
+
 // ─── Listings ───
 function getListings() {
   const list = getStore(KEYS.listings, SAMPLE_LISTINGS);
-  return [...list].sort((a, b) => (b.id - a.id)); // 최신 등록(id 큰 것) 순
+  return [...list].sort((a, b) => (b.id - a.id)).map(enrichListing); // 최신 등록(id 큰 것) 순
 }
 
 function getListingById(id) {
@@ -1165,13 +1292,21 @@ function buildListingCard(listing) {
         <p class="text-xs text-white/45 leading-relaxed line-clamp-2">${listing.description}</p>
       </div>
       <div class="listing-card-footer">
-        <div class="listing-card-footer-row">
-          <span class="flex items-center gap-1">
+        <div class="listing-card-footer-grid">
+          <!-- 1행: 메타 -->
+          <span class="lcf-cell flex items-center gap-1">
             <span class="material-symbols-outlined text-sm">schedule</span>
             ${listing.estimatedTime}
           </span>
-          ${maxParticipants > 0 ? `<span class="flex items-center gap-1"><span class="material-symbols-outlined text-sm">group</span>${Math.min(participants, maxParticipants).toLocaleString()}/${maxParticipants.toLocaleString()}명</span>` : ''}
-          <span class="font-bold text-yellow-300/90">${getListingReward(listing).toLocaleString()}원</span>
+          <span class="lcf-cell flex items-center gap-1">
+            ${maxParticipants > 0 ? `<span class="material-symbols-outlined text-sm">group</span>${Math.min(participants, maxParticipants).toLocaleString()}/${maxParticipants.toLocaleString()}명` : `<span class="material-symbols-outlined text-sm opacity-0">group</span>—`}
+          </span>
+          <span class="lcf-cell flex items-center gap-1 font-bold text-yellow-300/90">
+            <span class="material-symbols-outlined text-sm">paid</span>
+            ${getListingReward(listing).toLocaleString()}원
+          </span>
+          <!-- 2행: 참여 조건 -->
+          ${buildListingConditionsGridHtml(listing)}
         </div>
         <div class="listing-card-footer-cta">${actionBtn}</div>
       </div>
@@ -1293,6 +1428,16 @@ function renderDetail(listingId) {
       </div>
     </div>
 
+    <div class="detail-participant-conditions mb-6 p-4 rounded-xl border border-white/[0.08] bg-white/[0.03]">
+      <div class="flex items-center gap-2 mb-3">
+        <span class="material-symbols-outlined text-accent-text text-lg">groups</span>
+        <span class="text-xs font-semibold text-white/40 uppercase tracking-wider">참여 조건</span>
+      </div>
+      <div class="detail-participant-conditions-inner text-sm leading-relaxed">
+        ${buildListingConditionsHtml(listing)}
+      </div>
+    </div>
+
     <div class="detail-action">
       ${isActive && !completed ? `
         <a href="${listing.surveyLink}" target="_blank" rel="noopener noreferrer" class="btn-survey">
@@ -1350,6 +1495,17 @@ function renderSettlement() {
     const u = findUser(state.currentUser.email) || state.currentUser;
     const hasBankInfo = u.bankName && u.bankAccount;
     bankCard.innerHTML = `
+      ${!hasBankInfo ? `
+      <div class="mb-5 rounded-xl border-2 border-amber-500/60 bg-amber-500/[0.12] px-4 py-3.5 flex gap-3 items-start shadow-[0_0_24px_rgba(245,158,11,0.15)]">
+        <span class="material-symbols-outlined text-amber-400 text-2xl flex-shrink-0" style="font-variation-settings:'FILL'1">error</span>
+        <div class="min-w-0">
+          <p class="text-sm font-black text-amber-100 leading-snug">계좌번호를 꼭 입력해 주세요</p>
+          <p class="text-xs text-amber-100/80 mt-1.5 leading-relaxed">
+            정산은 <strong class="text-white">은행명·계좌번호가 등록된 경우에만</strong> 가능합니다. 아래에 입력한 뒤 <strong class="text-white">저장</strong>까지 완료해 주세요.
+          </p>
+        </div>
+      </div>
+      ` : ''}
       <div class="flex items-center gap-3 mb-5">
         <div class="w-10 h-10 rounded-xl bg-accent-dim/40 border border-accent-hi/20 flex items-center justify-center">
           <span class="material-symbols-outlined text-accent-text text-lg">account_balance</span>
@@ -1358,17 +1514,17 @@ function renderSettlement() {
           <p class="text-xs font-semibold text-white/40 uppercase tracking-wider mb-0.5">계좌 정보</p>
           ${hasBankInfo
             ? `<p class="text-sm font-bold">${escapeHtml(u.bankName)} <span class="text-white/50 font-normal">${escapeHtml(u.bankAccount)}</span></p>`
-            : `<p class="text-sm text-white/40">등록된 계좌가 없습니다</p>`
+            : `<p class="text-sm font-semibold text-amber-200/90">미등록 — 정산 불가</p>`
           }
         </div>
         <button id="btn-toggle-bank-form" class="ml-auto text-xs font-bold px-3 py-1.5 rounded-lg border transition-colors
           ${hasBankInfo
             ? 'border-white/10 text-white/40 hover:text-white/70 hover:border-white/20'
-            : 'border-accent-hi/40 text-accent-lt hover:bg-accent/20'}">
-          ${hasBankInfo ? '수정' : '계좌정보 등록'}
+            : 'border-amber-400/70 text-amber-100 bg-amber-500/15 hover:bg-amber-500/25 ring-2 ring-amber-400/30'}">
+          ${hasBankInfo ? '수정' : '계좌 입력하기'}
         </button>
       </div>
-      <div id="bank-form" class="hidden space-y-3">
+      <div id="bank-form" class="${hasBankInfo ? 'hidden' : ''} space-y-3">
         <div class="grid grid-cols-2 gap-3">
           <div>
             <label class="block text-xs font-semibold text-white/50 mb-1.5 uppercase tracking-wider">은행명</label>
@@ -1736,6 +1892,7 @@ function openAddListingModal() {
   document.getElementById('listing-surveyLink').value = '';
   document.getElementById('listing-deadline').value = `${yyyy}-${mm}-${dd}`;
   document.getElementById('listing-maxParticipants').value = '';
+  clearParticipantFieldsInModal();
 
   modal.querySelector('h2').textContent = '조사 추가';
   document.getElementById('btn-submit-add-listing').textContent = '생성하기';
@@ -1758,6 +1915,7 @@ function openEditListingModal(id) {
   document.getElementById('listing-surveyLink').value = listing.surveyLink || '';
   document.getElementById('listing-deadline').value = listing.deadline || '';
   document.getElementById('listing-maxParticipants').value = listing.maxParticipants || '';
+  applyParticipantFieldsToModal(listing);
 
   modal.querySelector('h2').textContent = '조사 수정';
   document.getElementById('btn-submit-add-listing').textContent = '저장하기';
@@ -1768,6 +1926,47 @@ function closeAddListingModal() {
   const modal = document.getElementById('add-listing-modal');
   if (!modal) return;
   modal.classList.add('hidden');
+}
+
+function readParticipantFieldsFromModal() {
+  const participantGenders = [];
+  if (document.getElementById('listing-gender-male')?.checked) participantGenders.push('male');
+  if (document.getElementById('listing-gender-female')?.checked) participantGenders.push('female');
+  const participantAgeRanges = [];
+  PART_AGE_ORDER.forEach(n => {
+    if (document.getElementById(`listing-age-${n}`)?.checked) participantAgeRanges.push(n);
+  });
+  const participantDevices = [];
+  if (document.getElementById('listing-device-pc')?.checked) participantDevices.push('pc');
+  if (document.getElementById('listing-device-mobile')?.checked) participantDevices.push('mobile');
+  return { participantGenders, participantAgeRanges, participantDevices };
+}
+
+function clearParticipantFieldsInModal() {
+  ['listing-gender-male', 'listing-gender-female', 'listing-device-pc', 'listing-device-mobile'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.checked = false;
+  });
+  PART_AGE_ORDER.forEach(n => {
+    const el = document.getElementById(`listing-age-${n}`);
+    if (el) el.checked = false;
+  });
+}
+
+function applyParticipantFieldsToModal(listing) {
+  const l = enrichListing(listing);
+  const gm = document.getElementById('listing-gender-male');
+  const gf = document.getElementById('listing-gender-female');
+  if (gm) gm.checked = l.participantGenders.includes('male');
+  if (gf) gf.checked = l.participantGenders.includes('female');
+  PART_AGE_ORDER.forEach(n => {
+    const el = document.getElementById(`listing-age-${n}`);
+    if (el) el.checked = l.participantAgeRanges.includes(n);
+  });
+  const dPc = document.getElementById('listing-device-pc');
+  const dMob = document.getElementById('listing-device-mobile');
+  if (dPc) dPc.checked = l.participantDevices.includes('pc');
+  if (dMob) dMob.checked = l.participantDevices.includes('mobile');
 }
 
 function createListingFromModal() {
@@ -1790,6 +1989,8 @@ function createListingFromModal() {
   if (!deadline) return { ok: false, error: '마감일을 입력하세요.' };
   if (!Number.isFinite(maxParticipants) || maxParticipants <= 0) return { ok: false, error: '최종 모수(명)를 올바르게 입력하세요.' };
 
+  const { participantGenders, participantAgeRanges, participantDevices } = readParticipantFieldsFromModal();
+
   const current = getStore(KEYS.listings, SAMPLE_LISTINGS) || [];
   const maxId = current.reduce((m, l) => Math.max(m, Number(l?.id) || 0), 0);
   const id = maxId + 1;
@@ -1805,6 +2006,9 @@ function createListingFromModal() {
     estimatedTime,
     maxParticipants,
     currentParticipants: 0,
+    participantGenders,
+    participantAgeRanges,
+    participantDevices,
   };
 
   setStore(KEYS.listings, [listing, ...current]);
@@ -1834,9 +2038,23 @@ function updateListingFromModal() {
   if (!deadline) return { ok: false, error: '마감일을 입력하세요.' };
   if (!Number.isFinite(maxParticipants) || maxParticipants <= 0) return { ok: false, error: '최종 모수(명)를 올바르게 입력하세요.' };
 
+  const { participantGenders, participantAgeRanges, participantDevices } = readParticipantFieldsFromModal();
+
   const current = getStore(KEYS.listings, SAMPLE_LISTINGS) || [];
   const updated = current.map(l => l.id === id
-    ? { ...l, title, category, estimatedTime, description, surveyLink, deadline, maxParticipants }
+    ? {
+        ...l,
+        title,
+        category,
+        estimatedTime,
+        description,
+        surveyLink,
+        deadline,
+        maxParticipants,
+        participantGenders,
+        participantAgeRanges,
+        participantDevices,
+      }
     : l
   );
   setStore(KEYS.listings, updated);
@@ -1949,7 +2167,12 @@ function bindEvents() {
       showError('login-error', '이메일과 비밀번호를 입력하세요.');
       return;
     }
+    const btn = document.getElementById('btn-login');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="btn-spinner"></span><span>로그인 중…</span>';
     const result = await login(email, password);
+    btn.disabled = false;
+    btn.textContent = '로그인';
     if (result.ok) {
       showView('app');
     } else {
@@ -2014,12 +2237,21 @@ function bindEvents() {
       showError('register-error', '필수 동의 항목(약관/개인정보/이메일 알림)에 모두 동의해주세요.');
       return;
     }
+    const btn = document.getElementById('btn-register');
+    const setLoading = (msg) => {
+      btn.disabled = true;
+      btn.innerHTML = `<span class="btn-spinner"></span><span>${msg}</span>`;
+    };
+    setLoading('계정 생성 중…');
     const result = await register(name, email, password, '', '');
     if (result.ok) {
+      setLoading('로그인 중…');
       await login(email, password);
       showView('app');
       showToast('회원가입이 완료되었습니다!');
     } else {
+      btn.disabled = false;
+      btn.textContent = '회원가입';
       showError('register-error', result.error);
     }
   });
