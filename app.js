@@ -722,12 +722,13 @@ async function verifyEmailCode(email, inputCode) {
 }
 
 async function register(name, email, password, phone, verificationCode) {
-  // 1) 이메일 인증 코드 검증 (클라이언트→서버)
-  const verifyResult = await verifyEmailCode(email, verificationCode);
-  if (!verifyResult.ok) {
-    return { ok: false, error: verifyResult.error };
+  // 이메일 인증 임시 비활성화 — verificationCode 있을 때만 검증
+  if (verificationCode) {
+    const verifyResult = await verifyEmailCode(email, verificationCode);
+    if (!verifyResult.ok) {
+      return { ok: false, error: verifyResult.error };
+    }
   }
-  // 2) 서버에서 bcrypt 해시 + 중복검증 + Supabase 저장
   try {
     const res = await fetch('/api/auth/register', {
       method: 'POST',
@@ -1988,15 +1989,17 @@ function bindEvents() {
   // Register
   document.getElementById('btn-register').addEventListener('click', async () => {
     const name = document.getElementById('reg-name').value.trim();
-    const phone = document.getElementById('reg-phone').value.trim();
-    const verificationCode = document.getElementById('reg-verify-code').value.trim();
     const email = document.getElementById('reg-email').value.trim();
     const password = document.getElementById('reg-password').value;
     const confirm = document.getElementById('reg-password-confirm').value;
 
     hideError('register-error');
-    if (!name || !phone || !verificationCode || !email || !password || !confirm) {
-      showError('register-error', '이메일 인증을 포함해 모든 필드를 입력하세요.');
+    if (!name || !email || !password || !confirm) {
+      showError('register-error', '이름, 이메일, 비밀번호를 모두 입력하세요.');
+      return;
+    }
+    if (!email.includes('@')) {
+      showError('register-error', '올바른 이메일 주소를 입력하세요.');
       return;
     }
     if (password !== confirm) {
@@ -2010,7 +2013,7 @@ function bindEvents() {
       showError('register-error', '필수 동의 항목(약관/개인정보/이메일 알림)에 모두 동의해주세요.');
       return;
     }
-    const result = await register(name, email, password, phone, verificationCode);
+    const result = await register(name, email, password, '', '');
     if (result.ok) {
       await login(email, password);
       showView('app');

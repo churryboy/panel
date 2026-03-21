@@ -18,14 +18,14 @@ module.exports = async (req, res) => {
     const body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
     const { name, email, password, phone } = body;
 
-    if (!name || !email || !password || !phone) {
-      return res.status(400).json({ ok: false, error: '모든 필드를 입력하세요.' });
+    if (!name || !email || !password) {
+      return res.status(400).json({ ok: false, error: '이름, 이메일, 비밀번호를 입력하세요.' });
     }
     if (password.length < 6) {
       return res.status(400).json({ ok: false, error: '비밀번호는 6자 이상이어야 합니다.' });
     }
 
-    const normalizedPhone = normalizePhone(phone);
+    const normalizedPhone = normalizePhone(phone || '');
     const normalizedEmail = email.trim().toLowerCase();
     const headers = {
       apikey: SUPABASE_SERVICE_ROLE_KEY,
@@ -33,19 +33,8 @@ module.exports = async (req, res) => {
       'Content-Type': 'application/json',
     };
 
-    // 이메일 인증 완료 여부 확인
-    const verifyRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/email_verifications?email=eq.${encodeURIComponent(normalizedEmail)}&status=eq.verified&order=created_at.desc&limit=1`,
-      { headers }
-    );
-    const verifyRows = await verifyRes.json().catch(() => []);
-    if (!Array.isArray(verifyRows) || verifyRows.length === 0) {
-      return res.status(400).json({ ok: false, error: '이메일 인증이 완료되지 않았습니다.' });
-    }
-    const verifiedAt = new Date(verifyRows[0].updated_at || verifyRows[0].created_at).getTime();
-    if (Date.now() - verifiedAt > EMAIL_VERIFY_WINDOW_MS) {
-      return res.status(400).json({ ok: false, error: '이메일 인증이 만료되었습니다. 다시 인증해주세요.' });
-    }
+    // 이메일 인증 확인 — 임시 비활성화 (Resend 도메인 설정 후 활성화)
+    // const verifyRes = await fetch(...)
 
     // 이메일 중복 확인
     const emailRes = await fetch(
@@ -57,14 +46,16 @@ module.exports = async (req, res) => {
       return res.status(409).json({ ok: false, error: '이미 가입된 이메일입니다.' });
     }
 
-    // 전화번호 중복 확인
-    const phoneRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/panel_users?phone=eq.${normalizedPhone}&select=phone&limit=1`,
-      { headers }
-    );
-    const phoneRows = await phoneRes.json().catch(() => []);
-    if (Array.isArray(phoneRows) && phoneRows.length > 0) {
-      return res.status(409).json({ ok: false, error: '이미 가입된 전화번호입니다.' });
+    // 전화번호 중복 확인 (번호가 있을 때만)
+    if (normalizedPhone.length >= 10) {
+      const phoneRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/panel_users?phone=eq.${normalizedPhone}&select=phone&limit=1`,
+        { headers }
+      );
+      const phoneRows = await phoneRes.json().catch(() => []);
+      if (Array.isArray(phoneRows) && phoneRows.length > 0) {
+        return res.status(409).json({ ok: false, error: '이미 가입된 전화번호입니다.' });
+      }
     }
 
     const passwordHash = await bcrypt.hash(password, 12);
