@@ -26,6 +26,11 @@ create table if not exists public.panel_listings (
   created_at       timestamptz not null default now()
 );
 
+-- 참여 조건 (JSON 문자열 배열: 성별/연령대/기기)
+alter table public.panel_listings add column if not exists participant_genders text not null default '[]';
+alter table public.panel_listings add column if not exists participant_age_ranges text not null default '[]';
+alter table public.panel_listings add column if not exists participant_devices text not null default '[]';
+
 -- 인덱스
 create index if not exists idx_listings_status on public.panel_listings(status);
 

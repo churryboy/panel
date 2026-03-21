@@ -1,4 +1,5 @@
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -67,10 +68,8 @@ module.exports = async (req, res) => {
         email: normalizedEmail,
         name,
         password: passwordHash,
-        phone: normalizedPhone,
-        phone_verified: false,
+        phone: normalizedPhone || crypto.randomUUID().replace(/-/g, ''),
         email_verified: true,
-        email_notice_agreed: true,
         bank_name: '',
         bank_account: '',
         birthdate: '',
