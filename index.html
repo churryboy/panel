@@ -2408,12 +2408,8 @@ select.sf-input option {
   (function () {
     try {
       var q = new URLSearchParams(window.location.search);
-      if (q.get('view') === 'app') {
-        document.documentElement.setAttribute('data-boot-app', '1');
-        return;
-      }
-      var s = localStorage.getItem('sp_session');
-      if (s != null && s !== '""' && s !== 'null') {
+      // ?view=login 일 때만 로그인 화면 유지, 나머지는 바로 앱 뷰 표시
+      if (q.get('view') !== 'login') {
         document.documentElement.setAttribute('data-boot-app', '1');
       }
     } catch (e) {}

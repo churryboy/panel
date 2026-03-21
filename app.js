@@ -1055,7 +1055,8 @@ function showAuthForm(mode = 'login') {
 
 function getRouteState() {
   const params = new URLSearchParams(window.location.search);
-  const view = params.get('view') === 'app' ? 'app' : 'login';
+  // 기본값은 'app'(공고 목록). 명시적으로 ?view=login 일 때만 로그인 화면.
+  const view = params.get('view') === 'login' ? 'login' : 'app';
   const mode = params.get('mode') === 'register' ? 'register' : 'login';
   return { view, mode };
 }
