@@ -32,6 +32,13 @@ npm run serve
 
 브라우저에서 표시된 주소(예: http://localhost:3000)로 접속합니다.
 
+### 로컬에 API 키(Resend 등) 두는 방법
+
+- **저장 위치:** 프로젝트 루트에 **`.env.local`** 파일을 만들고 키를 넣습니다. (이 파일은 `.gitignore`에 포함되어 **Git에 올라가지 않습니다.**)
+- **템플릿:** `.env.example`을 복사해 `.env.local`로 이름만 바꾼 뒤 값을 채우면 됩니다.
+- **주의:** Resend API 키는 **코드나 README에 직접 적지 마세요.** Vercel 배포 시에는 **Vercel 대시보드 → Environment Variables**에 동일한 이름으로 등록합니다.
+- **서버리스 API 테스트:** `npm run serve`만 쓰면 정적 파일만 서빙되어 `/api/email/send` 등이 동작하지 않을 수 있습니다. 이메일 발송까지 로컬에서 보려면 `npx vercel dev`로 띄우고, `.env.local`을 읽는지 확인하세요.
+
 ### 방법 2
 
 ```bash
