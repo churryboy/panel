@@ -39,6 +39,12 @@ npm run serve
 - **주의:** Resend API 키는 **코드나 README에 직접 적지 마세요.** Vercel 배포 시에는 **Vercel 대시보드 → Environment Variables**에 동일한 이름으로 등록합니다.
 - **서버리스 API 테스트:** `npm run serve`만 쓰면 정적 파일만 서빙되어 `/api/email/send` 등이 동작하지 않을 수 있습니다. 이메일 발송까지 로컬에서 보려면 `npx vercel dev`로 띄우고, `.env.local`을 읽는지 확인하세요.
 
+### 이메일 인증 발송이 500 / 실패할 때
+
+1. **Vercel 환경변수:** `RESEND_API_KEY`가 배포 프로젝트에 들어가 있는지 확인합니다. (로컬 `.env`만 넣고 Vercel에는 안 넣으면 **프로덕션에서만** 실패합니다.)
+2. **Supabase:** `email_verifications` 테이블이 없으면 DB 저장 단계에서 실패합니다. `SUPABASE_SETUP.sql`의 해당 섹션을 Supabase에서 실행했는지 확인합니다.
+3. **Resend 발신 주소:** `noreply@임의도메인`은 **Resend에서 도메인 인증 전에는 사용할 수 없습니다.** 테스트는 `EMAIL_FROM=onboarding@resend.dev`로 두고, Resend 계정에 등록한 **본인 이메일 주소로만** 수신 테스트가 가능합니다. 실제 가입자에게 보내려면 도메인을 Resend에 추가·인증한 뒤 `EMAIL_FROM`을 그 도메인 주소로 바꿉니다.
+
 ### 방법 2
 
 ```bash

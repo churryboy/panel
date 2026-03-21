@@ -669,6 +669,13 @@ function findUserByPhone(phone) {
   return getUsers().find(u => normalizePhone(u.phone) === normalized);
 }
 
+function parseJsonBody(res) {
+  return res
+    .json()
+    .then((j) => (j && typeof j === 'object' ? j : {}))
+    .catch(() => ({}));
+}
+
 async function sendEmailVerificationCode(email) {
   if (!email || !email.includes('@')) return { ok: false, error: '올바른 이메일 주소를 입력하세요.' };
   try {
@@ -677,9 +684,13 @@ async function sendEmailVerificationCode(email) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: email.trim().toLowerCase() }),
     });
-    const data = await res.json().catch(() => ({}));
+    const data = await parseJsonBody(res);
     if (!res.ok || !data.ok) {
-      return { ok: false, error: data.error || '인증번호 발송에 실패했습니다. 잠시 후 다시 시도해주세요.' };
+      const msg =
+        typeof data.error === 'string' && data.error.trim()
+          ? data.error
+          : '인증번호 발송에 실패했습니다. 잠시 후 다시 시도해주세요.';
+      return { ok: false, error: msg };
     }
     return { ok: true };
   } catch (e) {
@@ -696,8 +707,14 @@ async function verifyEmailCode(email, inputCode) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: email.trim().toLowerCase(), code }),
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) return { ok: false, error: data.error || '인증번호가 올바르지 않습니다.' };
+    const data = await parseJsonBody(res);
+    if (!res.ok || !data.ok) {
+      const msg =
+        typeof data.error === 'string' && data.error.trim()
+          ? data.error
+          : '인증번호가 올바르지 않습니다.';
+      return { ok: false, error: msg };
+    }
     return { ok: true };
   } catch (e) {
     return { ok: false, error: '네트워크 오류가 발생했습니다.' };

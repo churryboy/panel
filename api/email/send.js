@@ -11,7 +11,8 @@ const crypto = require('crypto');
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
-const EMAIL_FROM = process.env.EMAIL_FROM || 'noreply@proby.io';
+/** Resend: 도메인 미인증 시 테스트용 발신 (수신은 대시보드에 등록한 본인 이메일만 가능). 운영은 반드시 도메인 인증 후 EMAIL_FROM 설정 */
+const EMAIL_FROM = process.env.EMAIL_FROM || 'onboarding@resend.dev';
 const SMS_CODE_SALT = process.env.SMS_CODE_SALT || 'proby_sms_salt';
 
 const COOLDOWN_SECONDS = 60;
@@ -27,6 +28,24 @@ function sbHeaders() {
     Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
     'Content-Type': 'application/json',
   };
+}
+
+/** Resend 4xx 응답 본문 → 사용자용 한글 메시지 */
+function messageFromResendBody(body) {
+  if (!body || typeof body !== 'object') return null;
+  const raw = body.message || body.error?.message || (typeof body.error === 'string' ? body.error : '');
+  if (typeof raw !== 'string' || !raw.trim()) return null;
+  const lower = raw.toLowerCase();
+  if (lower.includes('domain') && (lower.includes('verif') || lower.includes('invalid'))) {
+    return '발신 주소(EMAIL_FROM) 도메인이 Resend에서 인증되지 않았습니다. Resend에서 도메인을 추가·인증한 뒤 Vercel 환경변수 EMAIL_FROM을 그 주소로 설정하세요.';
+  }
+  if (lower.includes('api') && lower.includes('key')) {
+    return 'Resend API 키(RESEND_API_KEY)가 올바르지 않습니다. Vercel 환경변수를 확인하세요.';
+  }
+  if (lower.includes('only send testing emails') || lower.includes('testing emails to your own')) {
+    return 'Resend 테스트 모드입니다. Resend 대시보드에 등록한 본인 이메일로만 테스트 발송이 가능합니다. 또는 도메인 인증 후 운영 발송을 설정하세요.';
+  }
+  return `이메일 발송 오류: ${raw}`;
 }
 
 module.exports = async (req, res) => {
@@ -52,10 +71,10 @@ module.exports = async (req, res) => {
       return res.status(400).json({ ok: false, error: '올바른 이메일 주소를 입력하세요.' });
     }
 
-    // 쿨다운 확인 (60초)
+    // 쿨다운 확인 (60초) — ISO 날짜는 쿼리스트링으로 인코딩
     const cooldownSince = new Date(Date.now() - COOLDOWN_SECONDS * 1000).toISOString();
     const recentRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/email_verifications?email=eq.${encodeURIComponent(email)}&created_at=gte.${cooldownSince}&order=created_at.desc&limit=1`,
+      `${SUPABASE_URL}/rest/v1/email_verifications?email=eq.${encodeURIComponent(email)}&created_at=gte.${encodeURIComponent(cooldownSince)}&order=created_at.desc&limit=1`,
       { headers: sbHeaders() }
     );
     if (recentRes.ok) {
@@ -94,7 +113,15 @@ module.exports = async (req, res) => {
     if (!insertRes.ok) {
       const text = await insertRes.text();
       log('error', 'insert failed', { email, status: insertRes.status, body: text });
-      return res.status(500).json({ ok: false, error: '인증정보 저장 실패' });
+      if (/email_verifications|does not exist|42P01/i.test(text)) {
+        return res.status(500).json({
+          ok: false,
+          error:
+            'DB에 email_verifications 테이블이 없습니다. Supabase SQL Editor에서 SUPABASE_SETUP.sql의 해당 섹션을 실행한 뒤 다시 시도하세요.',
+          code: 'DB_MISSING_TABLE',
+        });
+      }
+      return res.status(500).json({ ok: false, error: '인증정보 저장에 실패했습니다. 잠시 후 다시 시도해 주세요.', code: 'DB_INSERT_FAILED' });
     }
 
     // Resend로 이메일 발송
@@ -124,7 +151,10 @@ module.exports = async (req, res) => {
     const emailData = await emailRes.json().catch(() => ({}));
     if (!emailRes.ok) {
       log('error', 'Resend failed', { email, status: emailRes.status, body: emailData });
-      return res.status(500).json({ ok: false, error: '인증 이메일 발송에 실패했습니다. 잠시 후 다시 시도해 주세요.' });
+      const userMsg =
+        messageFromResendBody(emailData) ||
+        '인증 이메일 발송에 실패했습니다. RESEND_API_KEY·EMAIL_FROM·도메인 인증을 확인해 주세요.';
+      return res.status(502).json({ ok: false, error: userMsg, code: 'RESEND_FAILED' });
     }
 
     log('info', 'email sent', { email });
