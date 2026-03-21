@@ -2,7 +2,7 @@ const bcrypt = require('bcryptjs');
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const PHONE_VERIFY_WINDOW_MS = 10 * 60 * 1000; // 인증 유효 시간 10분
+const EMAIL_VERIFY_WINDOW_MS = 10 * 60 * 1000; // 인증 유효 시간 10분
 
 function normalizePhone(phone) {
   return String(phone || '').replace(/\D/g, '');
@@ -26,29 +26,30 @@ module.exports = async (req, res) => {
     }
 
     const normalizedPhone = normalizePhone(phone);
+    const normalizedEmail = email.trim().toLowerCase();
     const headers = {
       apikey: SUPABASE_SERVICE_ROLE_KEY,
       Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
       'Content-Type': 'application/json',
     };
 
-    // 전화번호 인증 완료 여부 확인
+    // 이메일 인증 완료 여부 확인
     const verifyRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/phone_verifications?phone=eq.${normalizedPhone}&status=eq.verified&order=created_at.desc&limit=1`,
+      `${SUPABASE_URL}/rest/v1/email_verifications?email=eq.${encodeURIComponent(normalizedEmail)}&status=eq.verified&order=created_at.desc&limit=1`,
       { headers }
     );
     const verifyRows = await verifyRes.json().catch(() => []);
     if (!Array.isArray(verifyRows) || verifyRows.length === 0) {
-      return res.status(400).json({ ok: false, error: '전화번호 인증이 완료되지 않았습니다.' });
+      return res.status(400).json({ ok: false, error: '이메일 인증이 완료되지 않았습니다.' });
     }
-    const verifiedAt = new Date(verifyRows[0].verified_at || verifyRows[0].updated_at || verifyRows[0].created_at).getTime();
-    if (Date.now() - verifiedAt > PHONE_VERIFY_WINDOW_MS) {
-      return res.status(400).json({ ok: false, error: '전화번호 인증이 만료되었습니다. 다시 인증해주세요.' });
+    const verifiedAt = new Date(verifyRows[0].updated_at || verifyRows[0].created_at).getTime();
+    if (Date.now() - verifiedAt > EMAIL_VERIFY_WINDOW_MS) {
+      return res.status(400).json({ ok: false, error: '이메일 인증이 만료되었습니다. 다시 인증해주세요.' });
     }
 
     // 이메일 중복 확인
     const emailRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/panel_users?email=eq.${encodeURIComponent(email)}&select=email&limit=1`,
+      `${SUPABASE_URL}/rest/v1/panel_users?email=eq.${encodeURIComponent(normalizedEmail)}&select=email&limit=1`,
       { headers }
     );
     const emailRows = await emailRes.json().catch(() => []);
@@ -66,19 +67,18 @@ module.exports = async (req, res) => {
       return res.status(409).json({ ok: false, error: '이미 가입된 전화번호입니다.' });
     }
 
-    // 비밀번호 bcrypt 해싱
     const passwordHash = await bcrypt.hash(password, 12);
 
-    // 유저 삽입
     const insertRes = await fetch(`${SUPABASE_URL}/rest/v1/panel_users`, {
       method: 'POST',
       headers: { ...headers, Prefer: 'return=minimal' },
       body: JSON.stringify([{
-        email,
+        email: normalizedEmail,
         name,
         password: passwordHash,
         phone: normalizedPhone,
-        phone_verified: true,
+        phone_verified: false,
+        email_verified: true,
         email_notice_agreed: true,
         bank_name: '',
         bank_account: '',

@@ -153,10 +153,51 @@ create policy "pv: service only"
   with check (true);
 
 -- ═══════════════════════════════════════════════════════
--- 5. 만료 세션/인증 자동 정리 (선택: pg_cron 있으면 활성화)
+-- 5. email_verifications — 이메일 인증코드
+-- ═══════════════════════════════════════════════════════
+create table if not exists public.email_verifications (
+  id            bigint generated always as identity primary key,
+  email         text        not null,
+  code_hash     text        not null,
+  status        text        not null default 'pending'
+                            check (status in ('pending', 'verified', 'expired', 'failed')),
+  attempt_count integer     not null default 0 check (attempt_count >= 0),
+  expires_at    timestamptz not null,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+
+create index if not exists idx_ev_email_status
+  on public.email_verifications(email, status, expires_at desc);
+create index if not exists idx_ev_expires_at
+  on public.email_verifications(expires_at);
+
+alter table public.email_verifications enable row level security;
+
+drop policy if exists "ev: service only" on public.email_verifications;
+create policy "ev: service only"
+  on public.email_verifications for all
+  to service_role
+  using (true)
+  with check (true);
+
+-- panel_users: email_verified 컬럼 추가 (없으면)
+do $$ begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema='public' and table_name='panel_users' and column_name='email_verified'
+  ) then
+    alter table public.panel_users add column email_verified boolean not null default false;
+  end if;
+end $$;
+
+-- ═══════════════════════════════════════════════════════
+-- 6. 만료 세션/인증 자동 정리 (선택: pg_cron 있으면 활성화)
 -- ═══════════════════════════════════════════════════════
 -- select cron.schedule('cleanup-expired', '0 * * * *', $$
 --   delete from public.sessions where expires_at < now();
 --   delete from public.phone_verifications
+--     where expires_at < now() - interval '1 day';
+--   delete from public.email_verifications
 --     where expires_at < now() - interval '1 day';
 -- $$);

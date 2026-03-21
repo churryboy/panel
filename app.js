@@ -669,15 +669,13 @@ function findUserByPhone(phone) {
   return getUsers().find(u => normalizePhone(u.phone) === normalized);
 }
 
-async function sendVerificationCode(phone) {
-  const normalized = normalizePhone(phone);
-  if (normalized.length < 10) return { ok: false, error: '올바른 전화번호를 입력하세요.' };
-  if (findUserByPhone(phone)) return { ok: false, error: '이미 가입된 전화번호입니다.' };
+async function sendEmailVerificationCode(email) {
+  if (!email || !email.includes('@')) return { ok: false, error: '올바른 이메일 주소를 입력하세요.' };
   try {
-    const res = await fetch('/api/sms/send', {
+    const res = await fetch('/api/email/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone: normalized }),
+      body: JSON.stringify({ email: email.trim().toLowerCase() }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) {
@@ -689,27 +687,28 @@ async function sendVerificationCode(phone) {
   }
 }
 
-async function verifyCode(phone, inputCode) {
-  const normalized = normalizePhone(phone);
+async function verifyEmailCode(email, inputCode) {
   const code = (inputCode || '').trim();
-  if (!normalized || !code) return false;
+  if (!email || !code) return { ok: false, error: '이메일과 인증번호를 입력하세요.' };
   try {
-    const res = await fetch('/api/sms/verify', {
+    const res = await fetch('/api/email/verify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone: normalized, code }),
+      body: JSON.stringify({ email: email.trim().toLowerCase(), code }),
     });
     const data = await res.json().catch(() => ({}));
-    return !!(res.ok && data.ok);
+    if (!res.ok || !data.ok) return { ok: false, error: data.error || '인증번호가 올바르지 않습니다.' };
+    return { ok: true };
   } catch (e) {
-    return false;
+    return { ok: false, error: '네트워크 오류가 발생했습니다.' };
   }
 }
 
 async function register(name, email, password, phone, verificationCode) {
-  // 1) SMS 인증 코드 검증 (클라이언트→서버)
-  if (!(await verifyCode(phone, verificationCode))) {
-    return { ok: false, error: '인증번호가 일치하지 않거나 만료되었습니다. 다시 받아 입력하세요.' };
+  // 1) 이메일 인증 코드 검증 (클라이언트→서버)
+  const verifyResult = await verifyEmailCode(email, verificationCode);
+  if (!verifyResult.ok) {
+    return { ok: false, error: verifyResult.error };
   }
   // 2) 서버에서 bcrypt 해시 + 중복검증 + Supabase 저장
   try {
@@ -1946,14 +1945,14 @@ function bindEvents() {
     });
   });
 
-  // 인증번호 받기
+  // 이메일 인증번호 발송
   document.getElementById('btn-send-verify').addEventListener('click', async () => {
-    const phone = document.getElementById('reg-phone').value.trim();
+    const email = document.getElementById('reg-email').value.trim();
     hideError('register-error');
     const btn = document.getElementById('btn-send-verify');
     btn.disabled = true;
     btn.textContent = '발송 중...';
-    const result = await sendVerificationCode(phone);
+    const result = await sendEmailVerificationCode(email);
     btn.disabled = false;
     btn.textContent = '인증번호 받기';
     if (!result.ok) {
@@ -1965,8 +1964,8 @@ function bindEvents() {
     document.getElementById('reg-verify-code').focus();
     const hint = document.getElementById('verify-hint');
     hint.classList.remove('hidden');
-    hint.textContent = '입력하신 번호로 인증번호를 발송했습니다. 문자 메시지를 확인해 주세요.';
-    showToast('인증번호가 발송되었습니다.');
+    hint.textContent = `${email}로 인증번호를 발송했습니다. 이메일을 확인해 주세요. (10분 내 입력)`;
+    showToast('인증번호가 이메일로 발송되었습니다.');
   });
 
   // Register
@@ -1980,7 +1979,7 @@ function bindEvents() {
 
     hideError('register-error');
     if (!name || !phone || !verificationCode || !email || !password || !confirm) {
-      showError('register-error', '전화번호 인증을 포함해 모든 필드를 입력하세요.');
+      showError('register-error', '이메일 인증을 포함해 모든 필드를 입력하세요.');
       return;
     }
     if (password !== confirm) {
