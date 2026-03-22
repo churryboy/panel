@@ -1979,31 +1979,52 @@ body {
   color: rgba(255, 255, 255, 0.4);
 }
 
-/* 1행·2행을 하나의 3-컬럼 그리드로 묶어 컬럼 정렬 */
-.listing-card-footer-grid {
+/* 푸터 메타: 3행 × 2열 (좌: 리워드·소요시간·모집인원 / 우: 성별·연령·기기) */
+.listing-card-footer-grid--3x2 {
   display: grid;
-  grid-template-columns: auto auto 1fr;
-  row-gap: 0.5rem;
-  column-gap: 0.75rem;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: auto auto auto;
+  gap: 0.55rem 1rem;
   font-size: 0.75rem;
-  line-height: 1;
-  color: rgba(255, 255, 255, 0.4);
-  align-items: center;
+  line-height: 1.25;
+  color: rgba(255, 255, 255, 0.55);
+  align-items: start;
 }
 
-.lcf-cell {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  line-height: 1;
+.lcf-pair {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
   min-width: 0;
 }
 
-/* Material Icons 크기 고정 */
-.listing-card-footer-grid .material-symbols-outlined {
+.lcf-pair-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.38);
+}
+
+.lcf-pair-value {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.82);
+  word-break: break-word;
+}
+
+.lcf-pair-value--reward {
+  font-weight: 800;
+  color: rgba(253, 224, 71, 0.95);
+}
+
+.listing-card-footer-grid--3x2 .material-symbols-outlined {
   font-size: 0.875rem;
   line-height: 1;
   flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.lcf-pair-value--reward .material-symbols-outlined {
+  color: rgba(253, 224, 71, 0.85);
 }
 
 .listing-card-footer-row--meta {
@@ -2875,12 +2896,8 @@ select.sf-input option {
           AI 인터뷰 조사 공고
         </button>
         <button class="tab" data-tab="settlement">
-          <span class="material-symbols-outlined text-lg">account_balance_wallet</span>
-          정산
-        </button>
-        <button id="tab-users" class="tab hidden" data-tab="users">
-          <span class="material-symbols-outlined text-lg">group</span>
-          유저 조회
+          <span class="material-symbols-outlined text-lg">person</span>
+          마이 페이지
         </button>
       </div>
     </div>
@@ -2936,35 +2953,41 @@ select.sf-input option {
           </div>
         </div>
 
-        <!-- ─── USERS VIEW (Admin) ─── -->
-        <div id="users-view" class="content-panel hidden">
-          <!-- 가입 유저 조회 → 테이블 -->
-          <div class="mb-4">
-            <h2 class="text-xl font-black tracking-tight">가입 유저 조회</h2>
-            <p class="text-sm text-white/40 mt-1">현재까지 가입된 유저 목록입니다 (관리자 전용)</p>
-          </div>
-          <div id="users-list" class="glass rounded-xl overflow-hidden p-0"></div>
-          <div id="users-empty" class="empty-state hidden">
-            <span class="material-symbols-outlined text-5xl text-white/20 mb-4">person_off</span>
-            <p class="text-white/40 text-sm">가입된 유저가 없습니다</p>
-          </div>
-
-          <!-- 사례비 집계 요약 -->
-          <div id="payout-summary" class="mt-10"></div>
-
-          <!-- 조사 참여자 현황 → 테이블 -->
-          <div class="mt-10 mb-4">
-            <h2 class="text-xl font-black tracking-tight">조사 참여자 현황</h2>
-            <p class="text-sm text-white/40 mt-1">진행중인 조사별 참여자 목록입니다</p>
-          </div>
-          <div id="users-participants" class="glass rounded-xl overflow-hidden p-0"></div>
-        </div>
-
-        <!-- ─── SETTLEMENT VIEW ─── -->
+        <!-- ─── SETTLEMENT / MY PAGE (개인 정산 + 관리자 블록) ─── -->
         <div id="settlement-view" class="content-panel hidden">
-          <div class="mb-8">
-            <h2 class="text-xl font-black tracking-tight">정산 내역</h2>
-            <p class="text-sm text-white/40 mt-1">완료한 설문과 사례비를 확인하세요</p>
+          <div class="mb-8 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+            <div>
+              <h2 class="text-xl font-black tracking-tight">마이 페이지</h2>
+              <p class="text-sm text-white/40 mt-1">사례비·계좌 정보·완료한 인터뷰를 확인하세요</p>
+            </div>
+            <button type="button" id="btn-edit-profile-inline" class="btn-ghost text-sm font-semibold px-4 py-2 rounded-xl border border-white/10 hover:bg-white/5 hidden shrink-0">
+              기본 정보 추가
+            </button>
+          </div>
+
+          <!-- 관리자: 유저·참여 현황 (마이 페이지 상단에 통합) -->
+          <div id="admin-section" class="hidden mb-12 space-y-10">
+            <div class="mb-4">
+              <h2 class="text-xl font-black tracking-tight">가입 유저 조회</h2>
+              <p class="text-sm text-white/40 mt-1">현재까지 가입된 유저 목록입니다 (관리자 전용)</p>
+            </div>
+            <div id="users-list" class="glass rounded-xl overflow-hidden p-0"></div>
+            <div id="users-empty" class="empty-state hidden">
+              <span class="material-symbols-outlined text-5xl text-white/20 mb-4">person_off</span>
+              <p class="text-white/40 text-sm">가입된 유저가 없습니다</p>
+            </div>
+
+            <div id="payout-summary" class="mt-10"></div>
+
+            <div class="mt-10 mb-4">
+              <h2 class="text-xl font-black tracking-tight">조사 참여자 현황</h2>
+              <p class="text-sm text-white/40 mt-1">진행중인 조사별 참여자 목록입니다</p>
+            </div>
+            <div id="users-participants" class="glass rounded-xl overflow-hidden p-0"></div>
+          </div>
+
+          <div class="mb-2">
+            <h3 class="text-sm font-bold text-white/50 uppercase tracking-wider">내 사례비 · 계좌</h3>
           </div>
 
           <!-- Summary + Bank Info Cards -->
@@ -2990,16 +3013,16 @@ select.sf-input option {
             </div>
           </div>
 
-          <!-- Completed Surveys List -->
-          <div class="mb-4">
-            <h3 class="text-sm font-bold text-white/60 uppercase tracking-wider mb-4">완료된 설문</h3>
+          <!-- Completed interviews list -->
+          <div class="mb-4 mt-8">
+            <h3 class="text-sm font-bold text-white/60 uppercase tracking-wider mb-4">완료된 인터뷰</h3>
           </div>
           <div id="settlement-list">
             <!-- Dynamically rendered -->
           </div>
           <div id="settlement-empty" class="empty-state hidden">
             <span class="material-symbols-outlined text-5xl text-white/20 mb-4">receipt_long</span>
-            <p class="text-white/40 text-sm">완료된 설문이 없습니다</p>
+            <p class="text-white/40 text-sm">완료된 인터뷰가 없습니다</p>
             <p class="text-white/30 text-xs mt-1">공고 탭에서 AI 인터뷰에 참여해 보세요</p>
           </div>
         </div>

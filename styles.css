@@ -347,6 +347,54 @@ body {
   justify-content: flex-start;
 }
 
+/* 카드 푸터 3×2 (index.html과 동기화) */
+.listing-card-footer-grid--3x2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: auto auto auto;
+  gap: 0.55rem 1rem;
+  font-size: 0.75rem;
+  line-height: 1.25;
+  color: rgba(255, 255, 255, 0.55);
+  align-items: start;
+}
+
+.lcf-pair {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.lcf-pair-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.38);
+}
+
+.lcf-pair-value {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.82);
+  word-break: break-word;
+}
+
+.lcf-pair-value--reward {
+  font-weight: 800;
+  color: rgba(253, 224, 71, 0.95);
+}
+
+.listing-card-footer-grid--3x2 .material-symbols-outlined {
+  font-size: 0.875rem;
+  line-height: 1;
+  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.lcf-pair-value--reward .material-symbols-outlined {
+  color: rgba(253, 224, 71, 0.85);
+}
+
 /* ─── BADGES & TAGS ─── */
 .badge {
   display: inline-flex;

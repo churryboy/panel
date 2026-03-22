@@ -996,19 +996,61 @@ function buildListingConditionsHtml(listing) {
   return chunks.join('');
 }
 
-// 카드 푸터 그리드용 — 각 조건이 독립 셀로 들어가야 1행과 컬럼이 맞음
-function buildListingConditionsGridHtml(listing) {
+// 카드 푸터: 3행×2열 (좌: 리워드·소요시간·모집인원 / 우: 성별·연령·기기)
+function buildListingFooterTwoColGridHtml(listing) {
+  const participants = getListingParticipantCount(listing.id, listing);
+  const maxParticipants = Number(listing.maxParticipants) || 0;
+  const reward = getListingReward(listing).toLocaleString();
+  const timeStr = (listing.estimatedTime && String(listing.estimatedTime).trim()) ? escapeHtml(String(listing.estimatedTime).trim()) : '—';
+  const mobStr =
+    maxParticipants > 0
+      ? `${Math.min(participants, maxParticipants).toLocaleString()}/${maxParticipants.toLocaleString()}명`
+      : '—';
+
   const g = formatParticipantGenders(listing.participantGenders);
   const a = formatParticipantAgeRanges(listing.participantAgeRanges);
   const d = formatParticipantDevices(listing.participantDevices);
-  if (!g && !a && !d) {
-    return `<span class="lcf-cell listing-cond-missing" style="grid-column:1/-1">참여 조건 미설정</span>`;
-  }
-  return [
-    g ? `<span class="lcf-cell flex items-center gap-1"><span class="material-symbols-outlined text-sm">wc</span>${escapeHtml(g)}</span>` : `<span class="lcf-cell"></span>`,
-    a ? `<span class="lcf-cell flex items-center gap-1"><span class="material-symbols-outlined text-sm">cake</span>${escapeHtml(a)}</span>` : `<span class="lcf-cell"></span>`,
-    d ? `<span class="lcf-cell flex items-center gap-1"><span class="material-symbols-outlined text-sm">devices</span>${escapeHtml(d)}</span>` : `<span class="lcf-cell"></span>`,
-  ].join('');
+  const col2g = g ? escapeHtml(g) : '<span class="listing-cond-missing">—</span>';
+  const col2a = a ? escapeHtml(a) : '<span class="listing-cond-missing">—</span>';
+  const col2d = d ? escapeHtml(d) : '<span class="listing-cond-missing">—</span>';
+
+  return `
+    <div class="listing-card-footer-grid listing-card-footer-grid--3x2">
+      <div class="lcf-pair">
+        <span class="lcf-pair-label">리워드</span>
+        <span class="lcf-pair-value lcf-pair-value--reward flex items-center gap-1">
+          <span class="material-symbols-outlined text-sm" style="font-variation-settings:'FILL'1">paid</span>
+          ${reward}원
+        </span>
+      </div>
+      <div class="lcf-pair">
+        <span class="lcf-pair-label">성별 조건</span>
+        <span class="lcf-pair-value flex items-center gap-1 min-w-0"><span class="material-symbols-outlined text-sm shrink-0">wc</span><span class="min-w-0">${col2g}</span></span>
+      </div>
+      <div class="lcf-pair">
+        <span class="lcf-pair-label">소요시간</span>
+        <span class="lcf-pair-value flex items-center gap-1">
+          <span class="material-symbols-outlined text-sm">schedule</span>
+          ${timeStr}
+        </span>
+      </div>
+      <div class="lcf-pair">
+        <span class="lcf-pair-label">연령 조건</span>
+        <span class="lcf-pair-value flex items-center gap-1 min-w-0"><span class="material-symbols-outlined text-sm shrink-0">cake</span><span class="min-w-0">${col2a}</span></span>
+      </div>
+      <div class="lcf-pair">
+        <span class="lcf-pair-label">모집인원</span>
+        <span class="lcf-pair-value flex items-center gap-1">
+          <span class="material-symbols-outlined text-sm">group</span>
+          ${escapeHtml(mobStr)}
+        </span>
+      </div>
+      <div class="lcf-pair">
+        <span class="lcf-pair-label">기기 조건</span>
+        <span class="lcf-pair-value flex items-center gap-1 min-w-0"><span class="material-symbols-outlined text-sm shrink-0">devices</span><span class="min-w-0">${col2d}</span></span>
+      </div>
+    </div>
+  `;
 }
 
 /** 이메일 비교·저장 시 대소문자·공백 차이로 참여 이력이 갈라지지 않도록 통일 */
@@ -1288,10 +1330,10 @@ function updateHeaderAuth() {
   if (loggedIn) {
     document.getElementById('header-user-name').textContent = state.currentUser.name || '';
   }
-  const tabUsers = document.getElementById('tab-users');
-  if (tabUsers) tabUsers.classList.toggle('hidden', !isAdmin());
   const tabSettlement = document.querySelector('[data-tab="settlement"]');
   if (tabSettlement) tabSettlement.classList.toggle('hidden', !loggedIn);
+  const btnEditProfileInline = document.getElementById('btn-edit-profile-inline');
+  if (btnEditProfileInline) btnEditProfileInline.classList.toggle('hidden', !loggedIn);
 }
 
 function showAuthForm(mode = 'login') {
@@ -1350,6 +1392,7 @@ function showView(name, options = {}) {
 }
 
 function switchTab(tab) {
+  if (tab === 'users') tab = 'settlement'; // 구 탭명 호환: 유저 조회 → 마이 페이지에 통합됨
   state.currentTab = tab;
 
   document.querySelectorAll('.tab').forEach(t => {
@@ -1364,12 +1407,7 @@ function switchTab(tab) {
   } else if (tab === 'settlement') {
     document.getElementById('settlement-view').classList.remove('hidden');
     renderSettlement();
-  } else if (tab === 'users') {
-    const panel = document.getElementById('users-view');
-    if (panel) {
-      panel.classList.remove('hidden');
-      renderUsers();
-    }
+    renderUsers();
   }
 }
 
@@ -1377,8 +1415,6 @@ function switchTab(tab) {
 // ─── Render: Listings ───
 function buildListingCard(listing) {
   const completed = isCompleted(listing.id);
-  const participants = getListingParticipantCount(listing.id, listing);
-  const maxParticipants = Number(listing.maxParticipants) || 0;
   const isActive = !isListingClosed(listing);
   const actionBtn = completed
     ? `<button class="card-btn-done" disabled>
@@ -1392,7 +1428,7 @@ function buildListingCard(listing) {
             data-title="${listing.title.replace(/"/g, '&quot;')}"
             data-category="${(listing.category || '').replace(/"/g, '&quot;')}">
            <span class="material-symbols-outlined text-base">open_in_new</span>
-           설문 참여
+           인터뷰 참여
          </a>`
       : `<span class="card-btn-closed">마감됨</span>`;
   const editBtn = isAdmin()
@@ -1418,22 +1454,7 @@ function buildListingCard(listing) {
         <p class="text-xs text-white/45 leading-relaxed line-clamp-2">${listing.description}</p>
       </div>
       <div class="listing-card-footer">
-        <div class="listing-card-footer-grid">
-          <!-- 1행: 메타 -->
-          <span class="lcf-cell flex items-center gap-1">
-            <span class="material-symbols-outlined text-sm">schedule</span>
-            ${listing.estimatedTime}
-          </span>
-          <span class="lcf-cell flex items-center gap-1">
-            ${maxParticipants > 0 ? `<span class="material-symbols-outlined text-sm">group</span>${Math.min(participants, maxParticipants).toLocaleString()}/${maxParticipants.toLocaleString()}명` : `<span class="material-symbols-outlined text-sm opacity-0">group</span>—`}
-          </span>
-          <span class="lcf-cell flex items-center gap-1 font-bold text-yellow-300/90">
-            <span class="material-symbols-outlined text-sm">paid</span>
-            ${getListingReward(listing).toLocaleString()}원
-          </span>
-          <!-- 2행: 참여 조건 -->
-          ${buildListingConditionsGridHtml(listing)}
-        </div>
+        ${buildListingFooterTwoColGridHtml(listing)}
         <div class="listing-card-footer-cta">${actionBtn}</div>
       </div>
     </div>
@@ -1575,7 +1596,7 @@ function renderDetail(listingId) {
       ${isActive && !completed ? `
         <a href="${listing.surveyLink}" target="_blank" rel="noopener noreferrer" class="btn-survey">
           <span class="material-symbols-outlined">open_in_new</span>
-          설문 참여하기
+          인터뷰 참여하기
         </a>
         <button class="btn-complete" data-listing-id="${listing.id}">
           <span class="material-symbols-outlined">check_circle</span>
@@ -1589,7 +1610,7 @@ function renderDetail(listingId) {
       ` : `
         <div class="flex items-center gap-2 text-white/40 text-sm font-semibold">
           <span class="material-symbols-outlined">block</span>
-          마감된 설문입니다
+          마감된 인터뷰입니다
         </div>
       `}
     </div>
@@ -1770,6 +1791,13 @@ function renderSettlement() {
 
 // ─── Render: Users (Admin) ───
 async function renderUsers() {
+  const adminSection = document.getElementById('admin-section');
+  if (!isAdmin()) {
+    if (adminSection) adminSection.classList.add('hidden');
+    return;
+  }
+  if (adminSection) adminSection.classList.remove('hidden');
+
   const container = document.getElementById('users-list');
   const empty = document.getElementById('users-empty');
   if (!container) return;
@@ -1905,7 +1933,7 @@ async function renderUsers() {
             <th>생년월일</th>
             <th>성별</th>
             <th>직업</th>
-            <th>완료 설문</th>
+            <th>완료 인터뷰</th>
             <th></th>
           </tr>
         </thead>
@@ -2587,8 +2615,11 @@ function bindEvents() {
     syncRoute('login', 'login');
   });
 
-  // Profile panel
-  document.getElementById('btn-profile').addEventListener('click', openProfilePanel);
+  // 우측 상단 프로필: 항상 마이 페이지로 이동 (기본 정보는 마이 페이지의 버튼에서)
+  document.getElementById('btn-profile').addEventListener('click', () => {
+    closeProfilePanel();
+    switchTab('settlement');
+  });
   document.getElementById('btn-close-profile').addEventListener('click', closeProfilePanel);
   document.getElementById('profile-backdrop').addEventListener('click', closeProfilePanel);
 
@@ -2604,6 +2635,7 @@ function bindEvents() {
   });
 
   document.getElementById('btn-withdraw').addEventListener('click', () => { withdrawAccount(); });
+  document.getElementById('btn-edit-profile-inline')?.addEventListener('click', () => openProfilePanel());
   document.getElementById('btn-view-service-terms')?.addEventListener('click', () => openTermsModal('service'));
   document.getElementById('btn-view-privacy-terms')?.addEventListener('click', () => openTermsModal('privacy'));
   document.getElementById('btn-close-terms-modal')?.addEventListener('click', closeTermsModal);
