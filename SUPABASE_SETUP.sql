@@ -197,9 +197,41 @@ do $$ begin
 end $$;
 
 -- ═══════════════════════════════════════════════════════
--- 6. 만료 세션/인증 자동 정리 (선택: pg_cron 있으면 활성화)
+-- 6. panel_completed (설문 참여 이력 — 서버 저장소)
 -- ═══════════════════════════════════════════════════════
--- select cron.schedule('cleanup-expired', '0 * * * *', $$
+create table if not exists public.panel_completed (
+  id           bigint      generated always as identity primary key,
+  user_email   text        not null,
+  listing_id   integer     not null,
+  completed_at timestamptz not null default now(),
+  reward       integer     not null default 0,
+  title        text        not null default '',
+  constraint panel_completed_unique unique (user_email, listing_id)
+);
+
+create index if not exists idx_completed_email    on public.panel_completed(user_email);
+create index if not exists idx_completed_listing  on public.panel_completed(listing_id);
+
+alter table public.panel_completed enable row level security;
+
+-- 읽기: 모든 사람(비로그인 포함) — 관리자 조회용
+drop policy if exists "completed: public read" on public.panel_completed;
+create policy "completed: public read"
+  on public.panel_completed for select
+  to anon, authenticated
+  using (true);
+
+-- 쓰기(insert/upsert): 누구나 허용 — 유저 본인이 anon key로 기록
+drop policy if exists "completed: public insert" on public.panel_completed;
+create policy "completed: public insert"
+  on public.panel_completed for insert
+  to anon, authenticated
+  with check (true);
+
+-- ═══════════════════════════════════════════════════════
+-- 7. 만료 세션/인증 자동 정리 (선택: pg_cron 있으면 활성화)
+-- ═══════════════════════════════════════════════════════
+-- select cron.schedule('cleanup-expired', '0 * * * *', $$ 
 --   delete from public.sessions where expires_at < now();
 --   delete from public.phone_verifications
 --     where expires_at < now() - interval '1 day';

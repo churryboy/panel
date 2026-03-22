@@ -220,15 +220,23 @@ async function syncListingsFromSupabase() {
     if (rows && rows.length > 0) {
       // 로컬에 저장된 participant 필드를 보존하기 위해 기존 localStorage 값을 먼저 읽어둠
       const localListings = getStore(KEYS.listings, []);
-      const localById = new Map(localListings.map(l => [l.id, l]));
+      const localById = new Map();
+      localListings.forEach(l => {
+        localById.set(l.id, l);
+        localById.set(Number(l.id), l);
+      });
 
       const byId = new Map(rows.map(r => {
         const fromDb = rowToListing(r);
-        const local = localById.get(r.id) || {};
+        const local = localById.get(r.id) || localById.get(Number(r.id)) || {};
         // DB에 participant 컬럼이 없을 경우(빈 배열) 로컬 값으로 보완
         if (!fromDb.participantGenders.length && local.participantGenders?.length) fromDb.participantGenders = local.participantGenders;
         if (!fromDb.participantAgeRanges.length && local.participantAgeRanges?.length) fromDb.participantAgeRanges = local.participantAgeRanges;
         if (!fromDb.participantDevices.length && local.participantDevices?.length) fromDb.participantDevices = local.participantDevices;
+        // current_participants: 클라이언트 upsert가 RLS로 실패하는 경우가 많아, 로컬에서 올린 값이 DB(0)로 덮이지 않게 병합
+        const dbCp = Number(fromDb.currentParticipants) || 0;
+        const localCp = Number(local.currentParticipants) || 0;
+        fromDb.currentParticipants = Math.max(dbCp, localCp);
         return [r.id, fromDb];
       }));
       SAMPLE_LISTINGS.forEach(sample => {
@@ -461,6 +469,9 @@ const state = {
   searchQuery: '',
   authMode: 'login',
 };
+
+/** 정산 탭 계좌 입력란 자동 저장 디바운스 */
+let bankInfoAutosaveTimer = null;
 
 // ─── Storage Keys ───
 const KEYS = {
@@ -711,6 +722,29 @@ function findUser(email) {
   return getUsers().find(u => u.email === email);
 }
 
+/** 로그인 세션의 최신 값이 panel_users 캐시보다 우선 (계좌 등 저장 직후 UI 일치) */
+function getMergedCurrentUser() {
+  if (!state.currentUser?.email) return null;
+  const fromList = findUser(state.currentUser.email);
+  return fromList ? { ...fromList, ...state.currentUser } : { ...state.currentUser };
+}
+
+function patchLocalUserByEmail(email, patch) {
+  if (!email || !patch) return;
+  const users = getUsers();
+  const idx = users.findIndex(u => u.email === email);
+  let next;
+  if (idx >= 0) {
+    next = users.slice();
+    next[idx] = { ...next[idx], ...patch };
+  } else if (state.currentUser?.email === email) {
+    next = [...users, { ...state.currentUser, ...patch }];
+  } else {
+    return;
+  }
+  setStore(KEYS.users, next);
+}
+
 function findUserByPhone(phone) {
   const normalized = normalizePhone(phone);
   if (!normalized) return null;
@@ -832,6 +866,7 @@ async function saveBankInfo(bankName, bankAccount) {
   state.currentUser.bankName = bankName;
   state.currentUser.bankAccount = bankAccount;
   setStore(KEYS.sessionUser, { ...state.currentUser });
+  patchLocalUserByEmail(state.currentUser.email, { bankName, bankAccount });
   await updateUserProfile(state.currentUser.email, { bankName, bankAccount });
 }
 
@@ -858,6 +893,8 @@ async function login(email, password) {
     setStore(KEYS.sessionUser, data.user);
     state.currentUser = data.user;
     safeMixpanelIdentify(data.user && data.user.name);
+    // 다른 기기에서 참여한 이력을 복원
+    syncCompletedFromSupabase().catch(() => {});
     return { ok: true };
   } catch (e) {
     return { ok: false, error: '네트워크 오류가 발생했습니다.' };
@@ -992,15 +1029,19 @@ function getDeadlineEndTime(deadline) {
 }
 
 function getListingParticipantCount(listingId, listing) {
-  if (listing && typeof listing.currentParticipants === 'number') {
-    return listing.currentParticipants;
-  }
+  const idStr = String(listingId);
   const participants = new Set(
     getCompleted()
-      .filter(c => c.listingId === listingId)
+      .filter(c => String(c.listingId) === idStr)
       .map(c => c.userEmail)
   );
-  return participants.size;
+  const derived = participants.size;
+  const stored =
+    listing && typeof listing.currentParticipants === 'number' && Number.isFinite(listing.currentParticipants)
+      ? Math.max(0, Math.floor(listing.currentParticipants))
+      : 0;
+  // 실제 완료 집계와 관리자가 조사 수정에서 저장한 값 중 큰 쪽 표시
+  return Math.max(derived, stored);
 }
 
 // 마감 조건: 데드라인 지남 OR 참여인원 마감 (둘 중 하나만 해당해도 마감)
@@ -1044,12 +1085,49 @@ function getCompleted() {
   return getStore(KEYS.completed, []);
 }
 
+/**
+ * Supabase panel_completed → localStorage 병합 동기화.
+ * 관리자 뷰 및 로그인 복원에 사용.
+ */
+async function syncCompletedFromSupabase() {
+  try {
+    const res = await fetch(
+      `${SUPABASE_REST_BASE}/panel_completed?select=*&order=completed_at.desc`,
+      { headers: getSupabaseHeaders() }
+    );
+    if (!res.ok) return;
+    const rows = await res.json();
+    if (!Array.isArray(rows) || rows.length === 0) return;
+
+    const mapped = rows.map(r => ({
+      userEmail:   r.user_email,
+      listingId:   Number(r.listing_id),
+      completedAt: r.completed_at,
+      reward:      r.reward || 0,
+      title:       r.title  || '',
+    }));
+
+    // 로컬 기록(= 현재 세션에서 방금 추가한 항목 포함)과 병합 — 중복 제거
+    const local = getStore(KEYS.completed, []);
+    const merged = [...mapped];
+    local.forEach(l => {
+      const dup = merged.some(
+        m => m.userEmail === l.userEmail && String(m.listingId) === String(l.listingId)
+      );
+      if (!dup) merged.push(l);
+    });
+    setStore(KEYS.completed, merged);
+  } catch (e) {
+    console.warn('[supabase] syncCompleted failed:', e);
+  }
+}
+
 function getUserCompleted() {
   if (!state.currentUser) return [];
   return getCompleted().filter(c => c.userEmail === state.currentUser.email);
 }
 
-function markCompleted(listingId) {
+async function markCompleted(listingId) {
   if (!state.currentUser) return;
   const listing = getListingById(listingId);
   if (!listing) return;
@@ -1057,24 +1135,44 @@ function markCompleted(listingId) {
 
   const completed = getCompleted();
   const exists = completed.find(
-    c => c.userEmail === state.currentUser.email && c.listingId === listingId
+    c => c.userEmail === state.currentUser.email && String(c.listingId) === String(listingId)
   );
   if (exists) return;
 
-  completed.push({
+  const lid = Number(listingId);
+  const reward = getListingReward(listing);
+  const entry = {
     userEmail: state.currentUser.email,
-    listingId,
+    listingId: Number.isFinite(lid) ? lid : listingId,
     completedAt: new Date().toISOString(),
-    reward: getListingReward(listing),
+    reward,
     title: listing.title,
-  });
+  };
+  completed.push(entry);
   setStore(KEYS.completed, completed);
+
+  // Supabase에도 기록 (다른 기기/관리자 조회용)
+  try {
+    await fetch(`${SUPABASE_REST_BASE}/panel_completed`, {
+      method: 'POST',
+      headers: { ...getSupabaseHeaders(), Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify({
+        user_email:   entry.userEmail,
+        listing_id:   entry.listingId,
+        completed_at: entry.completedAt,
+        reward:       entry.reward,
+        title:        entry.title,
+      }),
+    });
+  } catch (e) {
+    console.warn('[supabase] markCompleted upsert failed:', e);
+  }
 }
 
 function isCompleted(listingId) {
   if (!state.currentUser) return false;
   return getCompleted().some(
-    c => c.userEmail === state.currentUser.email && c.listingId === listingId
+    c => c.userEmail === state.currentUser.email && String(c.listingId) === String(listingId)
   );
 }
 
@@ -1264,7 +1362,10 @@ function buildListingCard(listing) {
        </button>`
     : isActive
       ? `<a href="${listing.surveyLink}" target="_blank" rel="noopener noreferrer"
-            class="card-btn-survey" data-id="${listing.id}">
+            class="card-btn-survey"
+            data-id="${listing.id}"
+            data-title="${listing.title.replace(/"/g, '&quot;')}"
+            data-category="${(listing.category || '').replace(/"/g, '&quot;')}">
            <span class="material-symbols-outlined text-base">open_in_new</span>
            설문 참여
          </a>`
@@ -1363,16 +1464,22 @@ function renderListings() {
 
   const container = sectionsEl || document.body;
   container.querySelectorAll('.card-btn-survey').forEach(btn => {
-    btn.addEventListener('click', e => {
+    btn.addEventListener('click', async e => {
       if (!state.currentUser) {
         e.preventDefault();
         showView('login');
         return;
       }
       const id = Number(btn.dataset.id);
+      // 트래킹은 listing 조회 성공 여부와 무관하게 항상 실행 (data-* 속성 fallback)
       const listing = getListingById(id);
-      if (listing) trackSurveyClick({ title: listing.title, listing_id: listing.id, category: listing.category, source: 'card' });
-      markCompleted(id);
+      trackSurveyClick({
+        title:    listing?.title    || btn.dataset.title    || String(id),
+        listing_id: id,
+        category: listing?.category || btn.dataset.category || '',
+        source:   'card',
+      });
+      await markCompleted(id);
       renderListings();
       showToast('정산 대기 중으로 기록되었습니다.');
     });
@@ -1406,34 +1513,34 @@ function renderDetail(listingId) {
 
     <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
       <div class="detail-section">
-        <div class="flex items-center gap-2 mb-2">
-          <span class="material-symbols-outlined text-accent-text text-lg">payments</span>
-          <span class="text-xs font-semibold text-white/40 uppercase tracking-wider">사례비</span>
+        <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem">
+          <span class="material-symbols-outlined" style="color:var(--accent-text);font-size:1.125rem">payments</span>
+          <span class="info-label">사례비</span>
         </div>
-        <p class="text-xl font-black">${getListingReward(listing).toLocaleString()}<span class="text-sm font-semibold text-white/40 ml-1">원</span></p>
+        <p style="font-size:1.25rem;font-weight:900">${getListingReward(listing).toLocaleString()}<span class="summary-card__unit">원</span></p>
       </div>
       <div class="detail-section">
-        <div class="flex items-center gap-2 mb-2">
-          <span class="material-symbols-outlined text-accent-text text-lg">schedule</span>
-          <span class="text-xs font-semibold text-white/40 uppercase tracking-wider">예상 소요시간</span>
+        <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem">
+          <span class="material-symbols-outlined" style="color:var(--accent-text);font-size:1.125rem">schedule</span>
+          <span class="info-label">예상 소요시간</span>
         </div>
-        <p class="text-xl font-black">${listing.estimatedTime}</p>
+        <p style="font-size:1.25rem;font-weight:900">${listing.estimatedTime}</p>
       </div>
       <div class="detail-section">
-        <div class="flex items-center gap-2 mb-2">
-          <span class="material-symbols-outlined text-accent-text text-lg">event</span>
-          <span class="text-xs font-semibold text-white/40 uppercase tracking-wider">마감일</span>
+        <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem">
+          <span class="material-symbols-outlined" style="color:var(--accent-text);font-size:1.125rem">event</span>
+          <span class="info-label">마감일</span>
         </div>
-        <p class="text-xl font-black">${formatDate(listing.deadline)}</p>
+        <p style="font-size:1.25rem;font-weight:900">${formatDate(listing.deadline)}</p>
       </div>
     </div>
 
-    <div class="detail-participant-conditions mb-6 p-4 rounded-xl border border-white/[0.08] bg-white/[0.03]">
-      <div class="flex items-center gap-2 mb-3">
-        <span class="material-symbols-outlined text-accent-text text-lg">groups</span>
-        <span class="text-xs font-semibold text-white/40 uppercase tracking-wider">참여 조건</span>
+    <div class="detail-conditions mb-6">
+      <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.75rem">
+        <span class="material-symbols-outlined" style="color:var(--accent-text);font-size:1.125rem">groups</span>
+        <span class="info-label">참여 조건</span>
       </div>
-      <div class="detail-participant-conditions-inner text-sm leading-relaxed">
+      <div style="font-size:0.875rem;line-height:1.6">
         ${buildListingConditionsHtml(listing)}
       </div>
     </div>
@@ -1464,8 +1571,9 @@ function renderDetail(listingId) {
 
   const completeBtn = container.querySelector('.btn-complete');
   if (completeBtn) {
-    completeBtn.addEventListener('click', () => {
-      markCompleted(listingId);
+    completeBtn.addEventListener('click', async () => {
+      trackSurveyClick({ title: listing.title, listing_id: listing.id, category: listing.category, source: 'detail-complete' });
+      await markCompleted(listingId);
       renderDetail(listingId);
       showToast('정산 대기 중으로 기록되었습니다.');
     });
@@ -1492,46 +1600,43 @@ function renderSettlement() {
   // 계좌정보 카드 렌더링
   const bankCard = document.getElementById('bank-info-card');
   if (bankCard) {
-    const u = findUser(state.currentUser.email) || state.currentUser;
+    const u = getMergedCurrentUser() || state.currentUser;
     const hasBankInfo = u.bankName && u.bankAccount;
     bankCard.innerHTML = `
       ${!hasBankInfo ? `
-      <div class="mb-5 rounded-xl border-2 border-amber-500/60 bg-amber-500/[0.12] px-4 py-3.5 flex gap-3 items-start shadow-[0_0_24px_rgba(245,158,11,0.15)]">
-        <span class="material-symbols-outlined text-amber-400 text-2xl flex-shrink-0" style="font-variation-settings:'FILL'1">error</span>
+      <div class="bank-alert">
+        <span class="material-symbols-outlined bank-alert__icon text-2xl" style="font-variation-settings:'FILL'1">error</span>
         <div class="min-w-0">
-          <p class="text-sm font-black text-amber-100 leading-snug">계좌번호를 꼭 입력해 주세요</p>
-          <p class="text-xs text-amber-100/80 mt-1.5 leading-relaxed">
-            정산은 <strong class="text-white">은행명·계좌번호가 등록된 경우에만</strong> 가능합니다. 아래에 입력한 뒤 <strong class="text-white">저장</strong>까지 완료해 주세요.
+          <p class="bank-alert__title">계좌번호를 꼭 입력해 주세요</p>
+          <p class="bank-alert__body">
+            정산은 <strong style="color:#fff">은행명·계좌번호가 등록된 경우에만</strong> 가능합니다. 아래에 입력한 뒤 <strong style="color:#fff">저장</strong>까지 완료해 주세요.
           </p>
         </div>
       </div>
       ` : ''}
-      <div class="flex items-center gap-3 mb-5">
-        <div class="w-10 h-10 rounded-xl bg-accent-dim/40 border border-accent-hi/20 flex items-center justify-center">
-          <span class="material-symbols-outlined text-accent-text text-lg">account_balance</span>
+      <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:1.25rem">
+        <div class="icon-wrap icon-wrap--accent">
+          <span class="material-symbols-outlined" style="font-size:1.125rem">account_balance</span>
         </div>
         <div>
-          <p class="text-xs font-semibold text-white/40 uppercase tracking-wider mb-0.5">계좌 정보</p>
+          <p class="info-label" style="margin-bottom:0.125rem">계좌 정보</p>
           ${hasBankInfo
-            ? `<p class="text-sm font-bold">${escapeHtml(u.bankName)} <span class="text-white/50 font-normal">${escapeHtml(u.bankAccount)}</span></p>`
-            : `<p class="text-sm font-semibold text-amber-200/90">미등록 — 정산 불가</p>`
+            ? `<p style="font-size:0.875rem;font-weight:700">${escapeHtml(u.bankName)} <span style="color:rgba(255,255,255,0.5);font-weight:400">${escapeHtml(u.bankAccount)}</span></p>`
+            : `<p style="font-size:0.875rem;font-weight:600;color:rgba(254,240,138,0.9)">미등록 — 정산 불가</p>`
           }
         </div>
-        <button id="btn-toggle-bank-form" class="ml-auto text-xs font-bold px-3 py-1.5 rounded-lg border transition-colors
-          ${hasBankInfo
-            ? 'border-white/10 text-white/40 hover:text-white/70 hover:border-white/20'
-            : 'border-amber-400/70 text-amber-100 bg-amber-500/15 hover:bg-amber-500/25 ring-2 ring-amber-400/30'}">
+        <button id="btn-toggle-bank-form" class="btn-bank-toggle ${hasBankInfo ? 'btn-bank-toggle--edit' : 'btn-bank-toggle--add'}">
           ${hasBankInfo ? '수정' : '계좌 입력하기'}
         </button>
       </div>
       <div id="bank-form" class="${hasBankInfo ? 'hidden' : ''} space-y-3">
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="block text-xs font-semibold text-white/50 mb-1.5 uppercase tracking-wider">은행명</label>
+            <label class="info-label" style="display:block;margin-bottom:0.375rem">은행명</label>
             <input type="text" id="bank-name-input" class="sf-input w-full" placeholder="하나은행" value="${escapeHtml(u.bankName || '')}">
           </div>
           <div>
-            <label class="block text-xs font-semibold text-white/50 mb-1.5 uppercase tracking-wider">계좌번호</label>
+            <label class="info-label" style="display:block;margin-bottom:0.375rem">계좌번호</label>
             <input type="text" id="bank-account-input" class="sf-input w-full" placeholder="000-0000-0000" value="${escapeHtml(u.bankAccount || '')}">
           </div>
         </div>
@@ -1548,11 +1653,35 @@ function renderSettlement() {
     document.getElementById('btn-cancel-bank').addEventListener('click', () => {
       document.getElementById('bank-form').classList.add('hidden');
     });
-    document.getElementById('btn-save-bank').addEventListener('click', async () => {
-      const bn = document.getElementById('bank-name-input').value.trim();
-      const ba = document.getElementById('bank-account-input').value.trim();
-      if (!bn || !ba) { showToast('은행명과 계좌번호를 모두 입력하세요.'); return; }
+    const bnInput = document.getElementById('bank-name-input');
+    const baInput = document.getElementById('bank-account-input');
+    const tryCommitBankInfo = async (showSavedToast) => {
+      const bn = bnInput.value.trim();
+      const ba = baInput.value.trim();
+      if (!bn || !ba) return;
+      const unchanged =
+        state.currentUser?.bankName === bn && state.currentUser?.bankAccount === ba;
+      if (unchanged) return;
       await saveBankInfo(bn, ba);
+      if (showSavedToast) showToast('계좌정보가 저장되었습니다!');
+      renderSettlement();
+    };
+    const scheduleBankAutosave = () => {
+      clearTimeout(bankInfoAutosaveTimer);
+      bankInfoAutosaveTimer = setTimeout(() => {
+        tryCommitBankInfo(true);
+      }, 550);
+    };
+    bnInput.addEventListener('input', scheduleBankAutosave);
+    baInput.addEventListener('input', scheduleBankAutosave);
+    document.getElementById('btn-save-bank').addEventListener('click', async () => {
+      const bn = bnInput.value.trim();
+      const ba = baInput.value.trim();
+      if (!bn || !ba) { showToast('은행명과 계좌번호를 모두 입력하세요.'); return; }
+      clearTimeout(bankInfoAutosaveTimer);
+      const unchanged =
+        state.currentUser?.bankName === bn && state.currentUser?.bankAccount === ba;
+      if (!unchanged) await saveBankInfo(bn, ba);
       showToast('계좌정보가 저장되었습니다!');
       renderSettlement();
     });
@@ -1573,42 +1702,40 @@ function renderSettlement() {
     completed.map(c => {
       const completedTime = c.completedAt ? new Date(c.completedAt).getTime() : 0;
       const settledTime = settledAt ? new Date(settledAt).getTime() : 0;
-      const isLegacySettled = settledTime < 1e12; // 예전 형식(날짜 없음)이면 전체 배지
+      const isLegacySettled = settledTime < 1e12;
       const showBadge = settledAt && (isLegacySettled || completedTime < settledTime);
       return `
       <div class="settlement-item">
         <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-xl bg-accent-dim/40 border border-accent-hi/20 flex items-center justify-center flex-shrink-0">
-            <span class="material-symbols-outlined text-accent-text text-lg">description</span>
+          <div class="icon-wrap icon-wrap--accent">
+            <span class="material-symbols-outlined" style="font-size:1.125rem">description</span>
           </div>
           <div>
-            <p class="text-sm font-semibold leading-tight flex items-center gap-2 flex-wrap">
+            <p style="font-size:0.875rem;font-weight:600;line-height:1.3;display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap">
               ${c.title}
               ${showBadge ? '<span class="badge-settlement-done">정산 완료</span>' : '<span class="badge-review">정산 대기 중</span>'}
             </p>
-            <p class="text-xs text-white/35 mt-0.5">${formatDate(c.completedAt)}</p>
+            <p style="font-size:0.75rem;color:rgba(255,255,255,0.35);margin-top:0.125rem">${formatDate(c.completedAt)}</p>
           </div>
         </div>
-        <span class="text-sm font-bold text-yellow-300/90 whitespace-nowrap">+${c.reward.toLocaleString()}원</span>
+        <span class="settlement-amount--earn">+${c.reward.toLocaleString()}원</span>
       </div>
     `;
     }).join('') +
     (payoutHistory.length > 0 ? `
-      <div class="mt-8 mb-4">
-        <h3 class="text-sm font-bold text-white/60 uppercase tracking-wider">정산 요청 내역</h3>
-      </div>
+      <p class="subsection-title">정산 요청 내역</p>
       ${payoutHistory.map(p => `
-        <div class="settlement-item" style="border-color: rgba(34,197,94,0.2)">
+        <div class="settlement-item settlement-item--paid">
           <div class="flex items-center gap-3">
-            <div class="w-10 h-10 rounded-xl bg-green-900/30 border border-green-500/20 flex items-center justify-center flex-shrink-0">
-              <span class="material-symbols-outlined text-green-400 text-lg">receipt</span>
+            <div class="icon-wrap icon-wrap--green">
+              <span class="material-symbols-outlined" style="font-size:1.125rem">receipt</span>
             </div>
             <div>
-              <p class="text-sm font-semibold leading-tight">정산 요청</p>
-              <p class="text-xs text-white/35 mt-0.5">${formatDate(p.requestedAt)} · ${p.bankName} ${p.bankAccount}</p>
+              <p style="font-size:0.875rem;font-weight:600;line-height:1.3">정산 요청</p>
+              <p style="font-size:0.75rem;color:rgba(255,255,255,0.35);margin-top:0.125rem">${formatDate(p.requestedAt)} · ${p.bankName} ${p.bankAccount}</p>
             </div>
           </div>
-          <span class="text-sm font-bold text-green-400/90 whitespace-nowrap">-${p.amount.toLocaleString()}원</span>
+          <span class="settlement-amount--paid">−${p.amount.toLocaleString()}원</span>
         </div>
       `).join('')}
     ` : '');
@@ -1619,7 +1746,8 @@ async function renderUsers() {
   const container = document.getElementById('users-list');
   const empty = document.getElementById('users-empty');
   if (!container) return;
-  await syncUsersFromSupabase();
+  // 참여 이력과 유저 목록 모두 서버에서 최신화
+  await Promise.all([syncUsersFromSupabase(), syncCompletedFromSupabase()]);
 
   const users = getUsers();
   const completed = getCompleted();
@@ -1636,8 +1764,18 @@ async function renderUsers() {
     .filter(l => l && !isListingClosed(l))
     .sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
 
+  // 조사 참여자 현황에서 제외할 테스트 계정
+  const EXCLUDED_EMAILS = new Set([
+    '123@123.com',
+    '1234@1234@.com',
+    '12345@12345.com',
+    '234@234.com',
+    'lee880728@gmail.com',
+  ]);
+
   const participantsByListingId = {};
   completed.forEach(c => {
+    if (EXCLUDED_EMAILS.has(c.userEmail)) return;
     const id = Number(c.listingId);
     if (!id) return;
     if (!participantsByListingId[id]) participantsByListingId[id] = new Set();
@@ -1650,6 +1788,8 @@ async function renderUsers() {
       : activeListings.map(listing => {
           const set = participantsByListingId[listing.id] || new Set();
           const emails = Array.from(set);
+          const reward = listing.reward || getListingReward(listing) || 0;
+          const totalPayout = emails.length * reward;
           const rows = emails.map(email => {
             const u = users.find(x => x.email === email);
             const name = u?.name || '—';
@@ -1657,35 +1797,46 @@ async function renderUsers() {
             return `
             <tr>
               <td>${escapeHtml(name)}</td>
-              <td class="text-white/60">${escapeHtml(email)}</td>
-              <td class="text-white/60">${escapeHtml(phoneDisplay)}</td>
+              <td style="color:rgba(255,255,255,0.6)">${escapeHtml(email)}</td>
+              <td style="color:rgba(255,255,255,0.6)">${escapeHtml(phoneDisplay)}</td>
+              <td class="settlement-amount--earn">${reward.toLocaleString()}원</td>
             </tr>
           `;
           }).join('');
 
+          const adminUrl = listing.adminUrl || '';
           return `
-          <div class="mb-8 last:mb-0 px-6 pt-6">
-            <div class="flex items-center justify-between gap-3 mb-3">
-              <div class="min-w-0">
-                <p class="text-sm font-bold truncate">${escapeHtml(listing.title || '제목 없음')}</p>
-                <p class="text-xs text-white/35 mt-0.5">
-                  참여자 ${emails.length.toLocaleString()}명
-                  ${listing.maxParticipants ? ` / 최종모수 ${Number(listing.maxParticipants).toLocaleString()}명` : ''}
-                </p>
-              </div>
-              <span class="badge badge-active">진행중</span>
+          <div class="participant-section" data-listing-id="${listing.id}">
+            <div class="participant-section__title-row">
+              <p class="participant-section__title">${escapeHtml(listing.title || '제목 없음')}</p>
+              ${totalPayout > 0 ? `<span class="badge-payout-total">총 지급 ${totalPayout.toLocaleString()}원</span>` : ''}
             </div>
-            <div class="overflow-x-auto rounded-xl border border-white/5">
+            <p class="participant-section__meta">
+              참여자 ${emails.length.toLocaleString()}명
+              ${listing.maxParticipants ? ` / 최종모수 ${Number(listing.maxParticipants).toLocaleString()}명` : ''}
+              · 사례비 ${reward.toLocaleString()}원
+            </p>
+            <div class="participant-section__url-row">
+              <span class="material-symbols-outlined info-label" style="font-size:14px">link</span>
+              <input type="url"
+                class="admin-url-input"
+                placeholder="관련 URL 입력 (선택)"
+                value="${escapeHtml(adminUrl)}"
+                data-listing-id="${listing.id}">
+              ${adminUrl ? `<a href="${escapeHtml(adminUrl)}" target="_blank" rel="noopener" class="participant-section__url-open"><span class="material-symbols-outlined" style="font-size:13px">open_in_new</span></a>` : ''}
+            </div>
+            <div class="participant-section__table-wrap">
               <table class="users-table users-table-nowrap">
                 <thead>
                   <tr>
                     <th>이름</th>
                     <th>이메일</th>
                     <th>전화번호</th>
+                    <th>사례비</th>
                   </tr>
                 </thead>
                 <tbody>
-                  ${rows || `<tr><td class="text-white/40" colspan="3">참여자가 없습니다</td></tr>`}
+                  ${rows || `<tr><td style="color:rgba(255,255,255,0.4)" colspan="4">참여자가 없습니다</td></tr>`}
                 </tbody>
               </table>
             </div>
@@ -1778,8 +1929,87 @@ async function renderUsers() {
     });
   }
 
+  // ─── 사례비 집계 요약 ───
+  const summaryEl = document.getElementById('payout-summary');
+  if (summaryEl) {
+    let paidTotal = 0;
+    let pendingTotal = 0;
+    users.forEach(u => {
+      const stat = byEmail[u.email];
+      if (!stat) return;
+      if (isSettlementCompleted(u.email)) {
+        paidTotal += stat.total;
+      } else {
+        pendingTotal += stat.total;
+      }
+    });
+    summaryEl.innerHTML = `
+      <div style="margin-bottom:1rem">
+        <h2 style="font-size:1.25rem;font-weight:900;letter-spacing:-0.02em">사례비 집계</h2>
+        <p style="font-size:0.875rem;color:rgba(255,255,255,0.4);margin-top:0.25rem">전체 유저의 정산 현황을 집계합니다</p>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+        <div class="glass summary-card">
+          <div class="icon-wrap icon-wrap--green">
+            <span class="material-symbols-outlined" style="font-size:1.125rem;line-height:1">check_circle</span>
+          </div>
+          <div>
+            <p class="summary-card__label">지급 완료</p>
+            <p class="summary-card__value summary-card__value--green">${paidTotal.toLocaleString()}<span class="summary-card__unit">원</span></p>
+          </div>
+        </div>
+        <div class="glass summary-card">
+          <div class="icon-wrap icon-wrap--yellow">
+            <span class="material-symbols-outlined" style="font-size:1.125rem;line-height:1">schedule</span>
+          </div>
+          <div>
+            <p class="summary-card__label">지급 예정</p>
+            <p class="summary-card__value summary-card__value--yellow">${pendingTotal.toLocaleString()}<span class="summary-card__unit">원</span></p>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   const participantsEl = document.getElementById('users-participants');
-  if (participantsEl) participantsEl.innerHTML = participantSectionHtml;
+  if (participantsEl) {
+    participantsEl.innerHTML = participantSectionHtml;
+
+    let adminUrlTimer = null;
+    participantsEl.querySelectorAll('.admin-url-input').forEach(input => {
+      const save = () => {
+        const id = Number(input.dataset.listingId);
+        if (!id) return;
+        const url = input.value.trim();
+        const all = getStore(KEYS.listings, []);
+        const updated = all.map(l => Number(l.id) === id ? { ...l, adminUrl: url } : l);
+        setStore(KEYS.listings, updated);
+        // 외부링크 아이콘 토글
+        const wrap = input.parentElement;
+        const existing = wrap.querySelector('a.admin-url-open');
+        if (url) {
+          if (!existing) {
+            const a = document.createElement('a');
+            a.href = url;
+            a.target = '_blank';
+            a.rel = 'noopener';
+            a.className = 'admin-url-open participant-section__url-open';
+            a.innerHTML = '<span class="material-symbols-outlined" style="font-size:13px">open_in_new</span>';
+            wrap.appendChild(a);
+          } else {
+            existing.href = url;
+          }
+        } else if (existing) {
+          existing.remove();
+        }
+      };
+      input.addEventListener('input', () => {
+        clearTimeout(adminUrlTimer);
+        adminUrlTimer = setTimeout(save, 600);
+      });
+      input.addEventListener('change', save);
+    });
+  }
 }
 
 function escapeHtml(str) {
@@ -1873,6 +2103,26 @@ function closeTermsModal() {
 }
 
 // ─── Admin: Add / Edit listing ───
+function syncListingAdminParticipantFieldVisibility() {
+  const wrap = document.getElementById('listing-admin-current-participants-wrap');
+  if (wrap) wrap.classList.toggle('hidden', !isAdmin());
+}
+
+/** 관리자(chris@proby.io)만 모달에서 조정. 최종 모수 이하·0 이상(정수). */
+function readAdminCurrentParticipantsFromModal(maxParticipants) {
+  if (!isAdmin()) return { ok: true, currentParticipants: 0 };
+  const raw = String(document.getElementById('listing-currentParticipants')?.value ?? '').trim();
+  const n = raw === '' ? 0 : Number(raw);
+  if (!Number.isFinite(n) || n < 0) {
+    return { ok: false, error: '현재 참여 인원은 0 이상의 숫자로 입력하세요.' };
+  }
+  const cp = Math.floor(n);
+  if (cp > maxParticipants) {
+    return { ok: false, error: '현재 참여 인원은 최종 모수(명)를 초과할 수 없습니다.' };
+  }
+  return { ok: true, currentParticipants: cp };
+}
+
 function openAddListingModal() {
   if (!isAdmin()) return;
   hideError('add-listing-error');
@@ -1892,7 +2142,10 @@ function openAddListingModal() {
   document.getElementById('listing-surveyLink').value = '';
   document.getElementById('listing-deadline').value = `${yyyy}-${mm}-${dd}`;
   document.getElementById('listing-maxParticipants').value = '';
+  const cpEl = document.getElementById('listing-currentParticipants');
+  if (cpEl) cpEl.value = '0';
   clearParticipantFieldsInModal();
+  syncListingAdminParticipantFieldVisibility();
 
   modal.querySelector('h2').textContent = '조사 추가';
   document.getElementById('btn-submit-add-listing').textContent = '생성하기';
@@ -1915,7 +2168,14 @@ function openEditListingModal(id) {
   document.getElementById('listing-surveyLink').value = listing.surveyLink || '';
   document.getElementById('listing-deadline').value = listing.deadline || '';
   document.getElementById('listing-maxParticipants').value = listing.maxParticipants || '';
+  const cpEl = document.getElementById('listing-currentParticipants');
+  if (cpEl) {
+    // 카드에 보이는 숫자(max(집계, 관리자저장))와 동일하게 표시
+    const shown = getListingParticipantCount(listing.id, listing);
+    cpEl.value = String(Math.max(0, Math.floor(shown)));
+  }
   applyParticipantFieldsToModal(listing);
+  syncListingAdminParticipantFieldVisibility();
 
   modal.querySelector('h2').textContent = '조사 수정';
   document.getElementById('btn-submit-add-listing').textContent = '저장하기';
@@ -1989,6 +2249,9 @@ function createListingFromModal() {
   if (!deadline) return { ok: false, error: '마감일을 입력하세요.' };
   if (!Number.isFinite(maxParticipants) || maxParticipants <= 0) return { ok: false, error: '최종 모수(명)를 올바르게 입력하세요.' };
 
+  const cpRes = readAdminCurrentParticipantsFromModal(maxParticipants);
+  if (!cpRes.ok) return { ok: false, error: cpRes.error };
+
   const { participantGenders, participantAgeRanges, participantDevices } = readParticipantFieldsFromModal();
 
   const current = getStore(KEYS.listings, SAMPLE_LISTINGS) || [];
@@ -2005,7 +2268,7 @@ function createListingFromModal() {
     category,
     estimatedTime,
     maxParticipants,
-    currentParticipants: 0,
+    currentParticipants: cpRes.currentParticipants,
     participantGenders,
     participantAgeRanges,
     participantDevices,
@@ -2038,6 +2301,9 @@ function updateListingFromModal() {
   if (!deadline) return { ok: false, error: '마감일을 입력하세요.' };
   if (!Number.isFinite(maxParticipants) || maxParticipants <= 0) return { ok: false, error: '최종 모수(명)를 올바르게 입력하세요.' };
 
+  const cpRes = readAdminCurrentParticipantsFromModal(maxParticipants);
+  if (!cpRes.ok) return { ok: false, error: cpRes.error };
+
   const { participantGenders, participantAgeRanges, participantDevices } = readParticipantFieldsFromModal();
 
   const current = getStore(KEYS.listings, SAMPLE_LISTINGS) || [];
@@ -2051,6 +2317,7 @@ function updateListingFromModal() {
         surveyLink,
         deadline,
         maxParticipants,
+        currentParticipants: cpRes.currentParticipants,
         participantGenders,
         participantAgeRanges,
         participantDevices,
@@ -2110,10 +2377,11 @@ function openPayoutModal() {
   }
 
   document.getElementById('modal-amount').textContent = amount.toLocaleString();
+  const u = getMergedCurrentUser();
   document.getElementById('payout-name').value = state.currentUser?.name || '';
   document.getElementById('payout-phone').value = '';
-  document.getElementById('payout-bank').value = '';
-  document.getElementById('payout-account').value = '';
+  document.getElementById('payout-bank').value = u?.bankName || '';
+  document.getElementById('payout-account').value = u?.bankAccount || '';
   hideError('payout-error');
   document.getElementById('payout-modal').classList.remove('hidden');
 }
