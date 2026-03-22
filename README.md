@@ -7,6 +7,22 @@
 - **`https://github.com/churryboy/casestudy.git`에는 이 폴더 작업을 올리지 않습니다.** (다른 레포와 혼동 금지)
 - `panel` 저장소를 별도로 클론한 뒤, 이 폴더 내용을 동기화하여 커밋·푸시하세요.
 
+### Vercel 프로덕션 (`proby-panel.vercel.app`) — **반드시 `main`**
+
+**원인:** Vercel 프로덕션은 **`main` 브랜치만** 배포합니다. 최신 작업이 **`wip`에만** 있고 `main`에 머지되지 않으면, 프로덕션 사이트에는 반영되지 않습니다. (예: `main`이 PR #5 머지 커밋에서 멈춰 있고, 그 이후 `wip`에만 커밋이 쌓인 경우.)
+
+**해결:** 기능 반영 후 아래 중 하나로 **`main`까지** 올립니다.
+
+- GitHub에서 **PR: `wip` → `main` 머지**, 또는
+- 로컬에서:
+  ```bash
+  git checkout main && git pull origin main
+  git merge wip
+  git push origin main
+  ```
+
+`main`에 푸시되면 Vercel이 새 프로덕션 배포를 시작합니다. 대시보드에서 1~2분 뒤 최신 배포가 뜨는지 확인하면 됩니다.
+
 ### 스타일이 전부 깨지고 로그인·회원가입·탭이 한 화면에 다 보일 때
 
 - **원인:** `dist/tailwind.css` 또는 `styles.css`가 **404**이면 Tailwind 유틸(`.hidden` 등)이 없어져 레이아웃이 무너집니다.

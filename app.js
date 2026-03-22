@@ -1011,6 +1011,12 @@ function buildListingConditionsGridHtml(listing) {
   ].join('');
 }
 
+/** 이메일 비교·저장 시 대소문자·공백 차이로 참여 이력이 갈라지지 않도록 통일 */
+function normalizeEmail(email) {
+  if (email == null || typeof email !== 'string') return '';
+  return email.trim().toLowerCase();
+}
+
 // ─── Listings ───
 function getListings() {
   const list = getStore(KEYS.listings, SAMPLE_LISTINGS);
@@ -1018,7 +1024,10 @@ function getListings() {
 }
 
 function getListingById(id) {
-  return getListings().find(l => l.id === id);
+  if (id === undefined || id === null || id === '') return undefined;
+  const n = Number(id);
+  if (!Number.isFinite(n)) return undefined;
+  return getListings().find(l => Number(l.id) === n);
 }
 
 function getDeadlineEndTime(deadline) {
@@ -1033,7 +1042,8 @@ function getListingParticipantCount(listingId, listing) {
   const participants = new Set(
     getCompleted()
       .filter(c => String(c.listingId) === idStr)
-      .map(c => c.userEmail)
+      .map(c => normalizeEmail(c.userEmail))
+      .filter(Boolean)
   );
   const derived = participants.size;
   const stored =
@@ -1067,7 +1077,8 @@ function getSettlementCompleted() {
 
 function getSettlementCompletedAt(email) {
   const list = getSettlementCompleted();
-  const found = list.find(e => e.email === email);
+  const ne = normalizeEmail(email);
+  const found = list.find(e => normalizeEmail(e.email) === ne);
   return found ? found.completedAt : null;
 }
 
@@ -1100,7 +1111,7 @@ async function syncCompletedFromSupabase() {
     if (!Array.isArray(rows) || rows.length === 0) return;
 
     const mapped = rows.map(r => ({
-      userEmail:   r.user_email,
+      userEmail:   normalizeEmail(r.user_email),
       listingId:   Number(r.listing_id),
       completedAt: r.completed_at,
       reward:      r.reward || 0,
@@ -1111,10 +1122,11 @@ async function syncCompletedFromSupabase() {
     const local = getStore(KEYS.completed, []);
     const merged = [...mapped];
     local.forEach(l => {
+      const le = normalizeEmail(l.userEmail);
       const dup = merged.some(
-        m => m.userEmail === l.userEmail && String(m.listingId) === String(l.listingId)
+        m => normalizeEmail(m.userEmail) === le && String(m.listingId) === String(l.listingId)
       );
-      if (!dup) merged.push(l);
+      if (!dup) merged.push({ ...l, userEmail: le || l.userEmail });
     });
     setStore(KEYS.completed, merged);
   } catch (e) {
@@ -1124,25 +1136,32 @@ async function syncCompletedFromSupabase() {
 
 function getUserCompleted() {
   if (!state.currentUser) return [];
-  return getCompleted().filter(c => c.userEmail === state.currentUser.email);
+  const me = normalizeEmail(state.currentUser.email);
+  return getCompleted().filter(c => normalizeEmail(c.userEmail) === me);
 }
 
 async function markCompleted(listingId) {
-  if (!state.currentUser) return;
+  if (!state.currentUser) return false;
   const listing = getListingById(listingId);
-  if (!listing) return;
-  if (isListingClosed(listing)) return;
+  if (!listing) {
+    console.warn('[markCompleted] listing not found for id:', listingId);
+    return false;
+  }
+  if (isListingClosed(listing)) return false;
+
+  const email = normalizeEmail(state.currentUser.email);
+  if (!email) return false;
 
   const completed = getCompleted();
   const exists = completed.find(
-    c => c.userEmail === state.currentUser.email && String(c.listingId) === String(listingId)
+    c => normalizeEmail(c.userEmail) === email && String(c.listingId) === String(listingId)
   );
-  if (exists) return;
+  if (exists) return true;
 
   const lid = Number(listingId);
   const reward = getListingReward(listing);
   const entry = {
-    userEmail: state.currentUser.email,
+    userEmail: email,
     listingId: Number.isFinite(lid) ? lid : listingId,
     completedAt: new Date().toISOString(),
     reward,
@@ -1153,7 +1172,7 @@ async function markCompleted(listingId) {
 
   // Supabase에도 기록 (다른 기기/관리자 조회용)
   try {
-    await fetch(`${SUPABASE_REST_BASE}/panel_completed`, {
+    const res = await fetch(`${SUPABASE_REST_BASE}/panel_completed`, {
       method: 'POST',
       headers: { ...getSupabaseHeaders(), Prefer: 'resolution=merge-duplicates,return=minimal' },
       body: JSON.stringify({
@@ -1164,15 +1183,20 @@ async function markCompleted(listingId) {
         title:        entry.title,
       }),
     });
+    if (!res.ok) {
+      console.warn('[supabase] markCompleted POST status', res.status, await res.text().catch(() => ''));
+    }
   } catch (e) {
     console.warn('[supabase] markCompleted upsert failed:', e);
   }
+  return true;
 }
 
 function isCompleted(listingId) {
   if (!state.currentUser) return false;
+  const me = normalizeEmail(state.currentUser.email);
   return getCompleted().some(
-    c => c.userEmail === state.currentUser.email && String(c.listingId) === String(listingId)
+    c => normalizeEmail(c.userEmail) === me && String(c.listingId) === String(listingId)
   );
 }
 
@@ -1181,7 +1205,8 @@ function getPayouts() { return getStore(KEYS.payouts, []); }
 
 function getUserPayouts() {
   if (!state.currentUser) return [];
-  return getPayouts().filter(p => p.userEmail === state.currentUser.email);
+  const me = normalizeEmail(state.currentUser.email);
+  return getPayouts().filter(p => normalizeEmail(p.userEmail) === me);
 }
 
 function getUnpaidTotal() {
@@ -1201,7 +1226,7 @@ function addPayout(name, phone, bankName, bankAccount) {
 
   const payouts = getPayouts();
   const payout = {
-    userEmail: state.currentUser.email,
+    userEmail: normalizeEmail(state.currentUser.email) || state.currentUser.email,
     userName: name,
     phone,
     bankName,
@@ -1479,9 +1504,10 @@ function renderListings() {
         category: listing?.category || btn.dataset.category || '',
         source:   'card',
       });
-      await markCompleted(id);
+      const ok = await markCompleted(id);
       renderListings();
-      showToast('정산 대기 중으로 기록되었습니다.');
+      if (ok) showToast('정산 대기 중으로 기록되었습니다.');
+      else showToast('조사를 찾지 못해 기록하지 못했습니다. 새로고침 후 다시 시도해 주세요.');
     });
   });
 }
@@ -1573,9 +1599,10 @@ function renderDetail(listingId) {
   if (completeBtn) {
     completeBtn.addEventListener('click', async () => {
       trackSurveyClick({ title: listing.title, listing_id: listing.id, category: listing.category, source: 'detail-complete' });
-      await markCompleted(listingId);
+      const ok = await markCompleted(listingId);
       renderDetail(listingId);
-      showToast('정산 대기 중으로 기록되었습니다.');
+      if (ok) showToast('정산 대기 중으로 기록되었습니다.');
+      else showToast('조사를 찾지 못해 기록하지 못했습니다. 새로고침 후 다시 시도해 주세요.');
     });
   }
   const surveyLinkEl = container.querySelector('.btn-survey');
@@ -1755,14 +1782,12 @@ async function renderUsers() {
 
   const byEmail = {};
   completed.forEach(c => {
-    if (!byEmail[c.userEmail]) byEmail[c.userEmail] = { count: 0, total: 0 };
-    byEmail[c.userEmail].count += 1;
-    byEmail[c.userEmail].total += c.reward;
+    const em = normalizeEmail(c.userEmail);
+    if (!em) return;
+    if (!byEmail[em]) byEmail[em] = { count: 0, total: 0 };
+    byEmail[em].count += 1;
+    byEmail[em].total += c.reward;
   });
-
-  const activeListings = (listings || [])
-    .filter(l => l && !isListingClosed(l))
-    .sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
 
   // 조사 참여자 현황에서 제외할 테스트 계정
   const EXCLUDED_EMAILS = new Set([
@@ -1775,23 +1800,36 @@ async function renderUsers() {
 
   const participantsByListingId = {};
   completed.forEach(c => {
-    if (EXCLUDED_EMAILS.has(c.userEmail)) return;
+    const em = normalizeEmail(c.userEmail);
+    if (!em || EXCLUDED_EMAILS.has(em)) return;
     const id = Number(c.listingId);
     if (!id) return;
     if (!participantsByListingId[id]) participantsByListingId[id] = new Set();
-    participantsByListingId[id].add(c.userEmail);
+    participantsByListingId[id].add(em);
   });
 
+  // 진행중 조사는 항상 표시. 마감 조사는 참여 기록이 있는 경우에만 표시(마감 후에도 이력 확인 가능)
+  const listingIdsWithParticipants = new Set(
+    Object.keys(participantsByListingId).map(k => Number(k)).filter(n => Number.isFinite(n) && n > 0)
+  );
+  const listingsForParticipantView = (listings || [])
+    .filter(l => {
+      if (!l) return false;
+      if (!isListingClosed(l)) return true;
+      return listingIdsWithParticipants.has(Number(l.id));
+    })
+    .sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
+
   const participantSectionHtml =
-    activeListings.length === 0
-      ? `<div class="px-6 py-8 text-sm text-white/40">진행중인 조사가 없습니다</div>`
-      : activeListings.map(listing => {
+    listingsForParticipantView.length === 0
+      ? `<div class="px-6 py-8 text-sm text-white/40">표시할 조사가 없습니다</div>`
+      : listingsForParticipantView.map(listing => {
           const set = participantsByListingId[listing.id] || new Set();
           const emails = Array.from(set);
           const reward = listing.reward || getListingReward(listing) || 0;
           const totalPayout = emails.length * reward;
           const rows = emails.map(email => {
-            const u = users.find(x => x.email === email);
+            const u = users.find(x => normalizeEmail(x.email) === email);
             const name = u?.name || '—';
             const phoneDisplay = u?.phone ? u.phone.replace(/(\d{3})(\d{3,4})(\d{4})/, '$1-$2-$3') : '—';
             return `
@@ -1805,10 +1843,12 @@ async function renderUsers() {
           }).join('');
 
           const adminUrl = listing.adminUrl || '';
+          const closed = isListingClosed(listing);
           return `
           <div class="participant-section" data-listing-id="${listing.id}">
             <div class="participant-section__title-row">
               <p class="participant-section__title">${escapeHtml(listing.title || '제목 없음')}</p>
+              ${closed ? '<span class="badge badge-closed text-xs shrink-0">마감</span>' : ''}
               ${totalPayout > 0 ? `<span class="badge-payout-total">총 지급 ${totalPayout.toLocaleString()}원</span>` : ''}
             </div>
             <p class="participant-section__meta">
@@ -1871,7 +1911,7 @@ async function renderUsers() {
         </thead>
         <tbody>
           ${users.map(u => {
-            const stat = byEmail[u.email] || { count: 0, total: 0 };
+            const stat = byEmail[normalizeEmail(u.email)] || { count: 0, total: 0 };
             const displayTotal = isSettlementCompleted(u.email) ? 0 : stat.total;
             const joined = u.createdAt ? formatDate(u.createdAt) : '—';
             const isMe = u.email === state.currentUser.email;
@@ -1935,7 +1975,7 @@ async function renderUsers() {
     let paidTotal = 0;
     let pendingTotal = 0;
     users.forEach(u => {
-      const stat = byEmail[u.email];
+      const stat = byEmail[normalizeEmail(u.email)];
       if (!stat) return;
       if (isSettlementCompleted(u.email)) {
         paidTotal += stat.total;
